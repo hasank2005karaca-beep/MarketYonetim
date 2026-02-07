@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+
+    <AssemblyName>KarakasMarket</AssemblyName>
+    <RootNamespace>MarketYonetim</RootNamespace>
+    <Version>1.0.0</Version>
+    <Company>Karakaş Market</Company>
+    <Product>Karakaş Market POS</Product>
+    <Description>Market Satış ve Yönetim Yazılımı</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Data.SqlClient" Version="4.8.6" />
+  </ItemGroup>
+
+</Project>
