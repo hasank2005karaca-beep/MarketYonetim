@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Globalization;
+using System.IO;
 using System.Reflection;
+using System.Text;
 using System.Windows.Forms;
 
 namespace MarketYonetim
@@ -71,6 +74,86 @@ namespace MarketYonetim
 
             PropertyInfo prop = kontrol.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic);
             prop?.SetValue(kontrol, true, null);
+        }
+
+        public static void DataTableToCsv(DataTable dt, string filePath, string delimiter = ";")
+        {
+            if (dt == null)
+            {
+                throw new ArgumentNullException(nameof(dt));
+            }
+
+            if (string.IsNullOrWhiteSpace(filePath))
+            {
+                throw new ArgumentException("Dosya yolu boş olamaz.", nameof(filePath));
+            }
+
+            CultureInfo culture = CultureInfo.GetCultureInfo("tr-TR");
+            StringBuilder sb = new StringBuilder();
+
+            for (int i = 0; i < dt.Columns.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(delimiter);
+                }
+                sb.Append(CsvHucre(dt.Columns[i].ColumnName, delimiter));
+            }
+            sb.AppendLine();
+
+            foreach (DataRow row in dt.Rows)
+            {
+                for (int i = 0; i < dt.Columns.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        sb.Append(delimiter);
+                    }
+                    object value = row[i];
+                    string metin = FormatDeger(value, culture);
+                    sb.Append(CsvHucre(metin, delimiter));
+                }
+                sb.AppendLine();
+            }
+
+            File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
+        }
+
+        private static string FormatDeger(object value, CultureInfo culture)
+        {
+            if (value == null || value == DBNull.Value)
+            {
+                return string.Empty;
+            }
+
+            if (value is DateTime tarih)
+            {
+                return tarih.ToString("dd.MM.yyyy HH:mm", culture);
+            }
+
+            if (value is decimal || value is double || value is float)
+            {
+                return Convert.ToDecimal(value).ToString("N2", culture);
+            }
+
+            return Convert.ToString(value, culture) ?? string.Empty;
+        }
+
+        private static string CsvHucre(string deger, string delimiter)
+        {
+            if (string.IsNullOrEmpty(deger))
+            {
+                return string.Empty;
+            }
+
+            bool quote = deger.Contains(delimiter) || deger.Contains("\n") || deger.Contains("\r") || deger.Contains("\"");
+            if (quote)
+            {
+                deger = deger.Replace("\"", "\"\"");
+                return $"\"{deger}\"";
+            }
+
+            return deger;
         }
     }
 }

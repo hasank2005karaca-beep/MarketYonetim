@@ -1,256 +1,529 @@
 using System;
 using System.Data;
-using System.Data.SqlClient;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace MarketYonetim
 {
     public partial class FormRaporlar : Form
     {
-        private TabControl tabControl;
-        private DataGridView dgvSatislar;
-        private DataGridView dgvUrunler;
+        private Panel panelFiltre;
+        private Panel panelAlt;
+        private DataGridView dgvRapor;
         private DateTimePicker dtpBaslangic;
         private DateTimePicker dtpBitis;
-        private Label lblToplamCiro;
+        private ComboBox cmbRaporTipi;
+        private ComboBox cmbOdeme;
+        private TextBox txtKasiyer;
+        private NumericUpDown nudTopN;
+        private ComboBox cmbSiralama;
+        private TextBox txtUrunArama;
+        private Button btnUrunSec;
+        private Label lblSeciliUrun;
+        private Label lblOzet;
+        private Button btnRaporGetir;
+        private Button btnCsv;
+        private Button btnYenile;
+        private int? seciliStokId;
 
         public FormRaporlar()
         {
             InitializeComponent();
-            RaporlariYukle();
+            dtpBaslangic.Value = DateTime.Today;
+            dtpBitis.Value = DateTime.Now;
+            cmbRaporTipi.SelectedIndex = 0;
+            GuncelleFiltreGorunurlugu();
+            _ = RaporuGetirAsync();
         }
 
         private void InitializeComponent()
         {
-            this.Text = "📊 Raporlar";
-            this.Size = new Size(1100, 700);
-            this.StartPosition = FormStartPosition.CenterParent;
-            this.BackColor = Color.White;
+            Text = "📊 Raporlar";
+            Size = new Size(1200, 720);
+            StartPosition = FormStartPosition.CenterParent;
+            BackColor = Color.White;
+            KeyPreview = true;
 
-            Panel panelUst = new Panel
+            panelFiltre = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 80,
-                BackColor = Color.FromArgb(0, 122, 204)
+                Height = 140,
+                BackColor = Color.FromArgb(245, 246, 250)
             };
 
-            Label lblBaslik = new Label
+            Label lblBaslangic = new Label
             {
-                Text = "📊 Satış Raporları",
-                Font = new Font("Segoe UI", 20, FontStyle.Bold),
-                ForeColor = Color.White,
-                Location = new Point(20, 22),
+                Text = "Başlangıç",
+                Location = new Point(16, 16),
                 AutoSize = true
             };
-
-            Label lblTarih = new Label
-            {
-                Text = "Tarih:",
-                ForeColor = Color.White,
-                Location = new Point(300, 30),
-                AutoSize = true
-            };
-
             dtpBaslangic = new DateTimePicker
             {
-                Location = new Point(350, 27),
-                Size = new Size(130, 25),
-                Format = DateTimePickerFormat.Short,
-                Value = DateTime.Today.AddDays(-30)
+                Location = new Point(16, 40),
+                Width = 140,
+                Format = DateTimePickerFormat.Short
             };
 
-            Label lblTire = new Label
+            Label lblBitis = new Label
             {
-                Text = "-",
-                ForeColor = Color.White,
-                Location = new Point(490, 30),
+                Text = "Bitiş",
+                Location = new Point(170, 16),
+                AutoSize = true
+            };
+            dtpBitis = new DateTimePicker
+            {
+                Location = new Point(170, 40),
+                Width = 140,
+                Format = DateTimePickerFormat.Short
+            };
+
+            Label lblRaporTipi = new Label
+            {
+                Text = "Rapor Tipi",
+                Location = new Point(324, 16),
+                AutoSize = true
+            };
+            cmbRaporTipi = new ComboBox
+            {
+                Location = new Point(324, 40),
+                Width = 220,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            cmbRaporTipi.Items.AddRange(new object[]
+            {
+                "Satış Özeti",
+                "KDV Raporu",
+                "En Çok Satanlar",
+                "Ürün Satış Performansı",
+                "Veresiye Raporu",
+                "Kasa Raporu"
+            });
+            cmbRaporTipi.SelectedIndexChanged += (s, e) => GuncelleFiltreGorunurlugu();
+
+            Label lblOdeme = new Label
+            {
+                Text = "Ödeme",
+                Location = new Point(560, 16),
+                AutoSize = true
+            };
+            cmbOdeme = new ComboBox
+            {
+                Location = new Point(560, 40),
+                Width = 140,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            cmbOdeme.Items.AddRange(new object[] { "Hepsi", "Nakit", "Kredi Kartı" });
+            cmbOdeme.SelectedIndex = 0;
+
+            Label lblKasiyer = new Label
+            {
+                Text = "Kasiyer",
+                Location = new Point(716, 16),
+                AutoSize = true
+            };
+            txtKasiyer = new TextBox
+            {
+                Location = new Point(716, 40),
+                Width = 120
+            };
+
+            Label lblTopN = new Label
+            {
+                Text = "Top N",
+                Location = new Point(852, 16),
+                AutoSize = true
+            };
+            nudTopN = new NumericUpDown
+            {
+                Location = new Point(852, 40),
+                Width = 70,
+                Minimum = 1,
+                Maximum = 500,
+                Value = 20
+            };
+
+            Label lblSiralama = new Label
+            {
+                Text = "Sıralama",
+                Location = new Point(936, 16),
+                AutoSize = true
+            };
+            cmbSiralama = new ComboBox
+            {
+                Location = new Point(936, 40),
+                Width = 120,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            cmbSiralama.Items.AddRange(new object[] { "Adet", "Tutar" });
+            cmbSiralama.SelectedIndex = 0;
+
+            Label lblUrun = new Label
+            {
+                Text = "Ürün",
+                Location = new Point(16, 78),
+                AutoSize = true
+            };
+            txtUrunArama = new TextBox
+            {
+                Location = new Point(16, 102),
+                Width = 240
+            };
+            btnUrunSec = new Button
+            {
+                Text = "Seç",
+                Location = new Point(268, 100),
+                Width = 60,
+                Height = 28
+            };
+            btnUrunSec.Click += BtnUrunSec_Click;
+
+            lblSeciliUrun = new Label
+            {
+                Text = "Seçili ürün: -",
+                Location = new Point(340, 104),
                 AutoSize = true
             };
 
-            dtpBitis = new DateTimePicker
+            panelFiltre.Controls.AddRange(new Control[]
             {
-                Location = new Point(510, 27),
-                Size = new Size(130, 25),
-                Format = DateTimePickerFormat.Short,
-                Value = DateTime.Today
+                lblBaslangic, dtpBaslangic,
+                lblBitis, dtpBitis,
+                lblRaporTipi, cmbRaporTipi,
+                lblOdeme, cmbOdeme,
+                lblKasiyer, txtKasiyer,
+                lblTopN, nudTopN,
+                lblSiralama, cmbSiralama,
+                lblUrun, txtUrunArama, btnUrunSec, lblSeciliUrun
+            });
+
+            dgvRapor = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                AllowUserToAddRows = false,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                RowHeadersVisible = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
+                BackgroundColor = Color.White
+            };
+            dgvRapor.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(45, 45, 48);
+            dgvRapor.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+            dgvRapor.ColumnHeadersHeight = 36;
+            dgvRapor.EnableHeadersVisualStyles = false;
+            dgvRapor.RowTemplate.Height = 28;
+            Yardimcilar.DoubleBufferedAktifEt(dgvRapor);
+
+            panelAlt = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 60,
+                BackColor = Color.FromArgb(250, 250, 250)
             };
 
-            Button btnFiltrele = new Button
+            btnRaporGetir = new Button
             {
-                Text = "🔍 Filtrele",
-                Location = new Point(660, 24),
-                Size = new Size(100, 32),
+                Text = "Raporu Getir",
+                Width = 130,
+                Height = 36,
+                Location = new Point(16, 12),
+                BackColor = Color.FromArgb(0, 122, 204),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat
+            };
+            btnRaporGetir.Click += async (s, e) => await RaporuGetirAsync();
+
+            btnCsv = new Button
+            {
+                Text = "CSV Dışa Aktar",
+                Width = 140,
+                Height = 36,
+                Location = new Point(156, 12),
                 BackColor = Color.FromArgb(0, 200, 83),
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat
             };
-            btnFiltrele.Click += (s, e) => RaporlariYukle();
+            btnCsv.Click += BtnCsv_Click;
 
-            lblToplamCiro = new Label
+            btnYenile = new Button
             {
-                Text = "Toplam: ₺0",
-                Font = new Font("Segoe UI", 14, FontStyle.Bold),
-                ForeColor = Color.FromArgb(0, 200, 83),
-                Location = new Point(800, 27),
-                AutoSize = true
+                Text = "Yenile (F5)",
+                Width = 110,
+                Height = 36,
+                Location = new Point(306, 12),
+                BackColor = Color.FromArgb(255, 193, 7),
+                ForeColor = Color.Black,
+                FlatStyle = FlatStyle.Flat
             };
-
-            panelUst.Controls.AddRange(new Control[] { 
-                lblBaslik, lblTarih, dtpBaslangic, lblTire, dtpBitis, btnFiltrele, lblToplamCiro 
-            });
-
-            tabControl = new TabControl
-            {
-                Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI", 11)
-            };
-
-            TabPage tabSatislar = new TabPage("💰 Satışlar");
-            dgvSatislar = CreateDataGridView();
-            tabSatislar.Controls.Add(dgvSatislar);
-
-            TabPage tabUrunler = new TabPage("🏆 En Çok Satanlar");
-            dgvUrunler = CreateDataGridView();
-            tabUrunler.Controls.Add(dgvUrunler);
-
-            tabControl.TabPages.AddRange(new TabPage[] { tabSatislar, tabUrunler });
-
-            Panel panelAlt = new Panel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 50,
-                BackColor = Color.FromArgb(240, 240, 240)
-            };
+            btnYenile.Click += async (s, e) => await RaporuGetirAsync();
 
             Button btnKapat = new Button
             {
                 Text = "Kapat",
-                Location = new Point(950, 8),
-                Size = new Size(100, 35),
+                Width = 90,
+                Height = 36,
+                Location = new Point(1060, 12),
                 BackColor = Color.Gray,
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat
             };
-            btnKapat.Click += (s, e) => this.Close();
+            btnKapat.Click += (s, e) => Close();
 
-            panelAlt.Controls.Add(btnKapat);
-
-            this.Controls.Add(tabControl);
-            this.Controls.Add(panelAlt);
-            this.Controls.Add(panelUst);
-        }
-
-        private DataGridView CreateDataGridView()
-        {
-            DataGridView dgv = new DataGridView
+            lblOzet = new Label
             {
-                Dock = DockStyle.Fill,
-                Font = new Font("Segoe UI", 10),
-                BackgroundColor = Color.White,
-                BorderStyle = BorderStyle.None,
-                AllowUserToAddRows = false,
-                ReadOnly = true,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                RowHeadersVisible = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+                Text = "Kayıt: 0",
+                AutoSize = true,
+                Location = new Point(430, 20),
+                Font = new Font("Segoe UI", 10, FontStyle.Bold)
             };
-            dgv.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 122, 204);
-            dgv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(45, 45, 48);
-            dgv.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
-            dgv.ColumnHeadersHeight = 40;
-            dgv.EnableHeadersVisualStyles = false;
-            dgv.RowTemplate.Height = 30;
-            return dgv;
+
+            panelAlt.Controls.AddRange(new Control[]
+            {
+                btnRaporGetir, btnCsv, btnYenile, lblOzet, btnKapat
+            });
+
+            Controls.Add(dgvRapor);
+            Controls.Add(panelAlt);
+            Controls.Add(panelFiltre);
         }
 
-        private void RaporlariYukle()
+        private void BtnUrunSec_Click(object sender, EventArgs e)
         {
-            SatislariYukle();
-            EnCokSatanlariYukle();
+            using (UrunSecimForm form = new UrunSecimForm(txtUrunArama.Text))
+            {
+                if (form.ShowDialog(this) == DialogResult.OK)
+                {
+                    seciliStokId = form.SeciliStokId;
+                    lblSeciliUrun.Text = $"Seçili ürün: {form.SeciliUrun}";
+                }
+            }
         }
 
-        private void SatislariYukle()
+        private void GuncelleFiltreGorunurlugu()
         {
+            string raporTipi = cmbRaporTipi.SelectedItem?.ToString() ?? string.Empty;
+            bool satisOzeti = raporTipi == "Satış Özeti";
+            bool enCokSatan = raporTipi == "En Çok Satanlar";
+            bool urunPerformans = raporTipi == "Ürün Satış Performansı";
+
+            cmbOdeme.Enabled = satisOzeti;
+            txtKasiyer.Enabled = satisOzeti;
+            nudTopN.Enabled = enCokSatan;
+            cmbSiralama.Enabled = enCokSatan;
+            txtUrunArama.Enabled = urunPerformans;
+            btnUrunSec.Enabled = urunPerformans;
+            lblSeciliUrun.Enabled = urunPerformans;
+        }
+
+        private async Task RaporuGetirAsync()
+        {
+            if (cmbRaporTipi.SelectedItem == null)
+            {
+                return;
+            }
+
+            SetLoading(true);
             try
             {
-                using (SqlConnection conn = new SqlConnection(Ayarlar.ConnectionString))
-                {
-                    string sql = @"
-                        SELECT 
-                            nAlisverisID as 'Fiş No',
-                            CONVERT(varchar(16), dteFaturaTarihi, 104) + ' ' + CONVERT(varchar(5), dteFaturaTarihi, 108) as 'Tarih',
-                            ISNULL(m.sAdi + ' ' + ISNULL(m.sSoyadi,''), 'Peşin') as 'Müşteri',
-                            a.lNetTutar as 'Tutar',
-                            a.sKullaniciAdi as 'Kasiyer'
-                        FROM tbAlisVeris a
-                        LEFT JOIN tbMusteri m ON a.nMusteriID = m.nMusteriID
-                        WHERE a.dteFaturaTarihi BETWEEN @baslangic AND @bitis
-                            AND a.sFisTipi = 'PS'
-                        ORDER BY a.dteFaturaTarihi DESC";
-
-                    using (SqlDataAdapter adapter = new SqlDataAdapter(sql, conn))
-                    {
-                        adapter.SelectCommand.Parameters.AddWithValue("@baslangic", dtpBaslangic.Value.Date);
-                        adapter.SelectCommand.Parameters.AddWithValue("@bitis", dtpBitis.Value.Date.AddDays(1));
-
-                        DataTable dt = new DataTable();
-                        adapter.Fill(dt);
-                        dgvSatislar.DataSource = dt;
-
-                        decimal toplamCiro = 0;
-                        foreach (DataRow row in dt.Rows)
-                        {
-                            if (row["Tutar"] != DBNull.Value)
-                                toplamCiro += Convert.ToDecimal(row["Tutar"]);
-                        }
-                        lblToplamCiro.Text = $"Toplam: ₺{toplamCiro:N2}";
-
-                        if (dgvSatislar.Columns.Contains("Tutar"))
-                            dgvSatislar.Columns["Tutar"].DefaultCellStyle.Format = "₺#,##0.00";
-                    }
-                }
+                DataTable dt = await Task.Run(() => RaporVerisiGetir());
+                dgvRapor.DataSource = dt;
+                GuncelleOzet(dt);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Hata: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Hata: {ex.Message}", "Rapor", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                SetLoading(false);
             }
         }
 
-        private void EnCokSatanlariYukle()
+        private DataTable RaporVerisiGetir()
         {
-            try
+            DateTime baslangic = dtpBaslangic.Value.Date;
+            DateTime bitis = dtpBitis.Value;
+            string raporTipi = cmbRaporTipi.SelectedItem?.ToString() ?? string.Empty;
+
+            switch (raporTipi)
             {
-                using (SqlConnection conn = new SqlConnection(Ayarlar.ConnectionString))
-                {
-                    string sql = @"
-                        SELECT TOP 50
-                            s.sKodu as 'Kod',
-                            s.sAciklama as 'Ürün Adı',
-                            SUM(d.lMiktar) as 'Satılan',
-                            SUM(d.lTutar) as 'Toplam ₺'
-                        FROM tbAlisverisSiparis d
-                        INNER JOIN tbAlisVeris a ON d.nAlisverisID = a.nAlisverisID
-                        INNER JOIN tbStok s ON d.nStokID = s.nStokID
-                        WHERE a.dteFaturaTarihi BETWEEN @baslangic AND @bitis
-                        GROUP BY s.sKodu, s.sAciklama
-                        ORDER BY SUM(d.lMiktar) DESC";
-
-                    using (SqlDataAdapter adapter = new SqlDataAdapter(sql, conn))
+                case "Satış Özeti":
+                    return VeriKatmani.SatisRaporuGetir(baslangic, bitis, OdemeSekliGetir(), txtKasiyer.Text.Trim());
+                case "KDV Raporu":
+                    return VeriKatmani.KdvRaporuGetir(baslangic, bitis);
+                case "En Çok Satanlar":
+                    return VeriKatmani.EnCokSatanlarGetir(baslangic, bitis, (int)nudTopN.Value, cmbSiralama.SelectedIndex == 1 ? "tutar" : "adet");
+                case "Ürün Satış Performansı":
+                    if (!seciliStokId.HasValue)
                     {
-                        adapter.SelectCommand.Parameters.AddWithValue("@baslangic", dtpBaslangic.Value.Date);
-                        adapter.SelectCommand.Parameters.AddWithValue("@bitis", dtpBitis.Value.Date.AddDays(1));
+                        throw new InvalidOperationException("Lütfen ürün seçin.");
+                    }
+                    return VeriKatmani.UrunSatisPerformansGetir(seciliStokId.Value, baslangic, bitis);
+                case "Veresiye Raporu":
+                    return VeriKatmani.VeresiyeRaporuGetir(baslangic, bitis);
+                case "Kasa Raporu":
+                    return VeriKatmani.KasaRaporuGetir(baslangic, bitis);
+                default:
+                    return new DataTable();
+            }
+        }
 
-                        DataTable dt = new DataTable();
-                        adapter.Fill(dt);
-                        dgvUrunler.DataSource = dt;
+        private string OdemeSekliGetir()
+        {
+            string odeme = cmbOdeme.SelectedItem?.ToString() ?? "Hepsi";
+            if (odeme == "Nakit")
+            {
+                return "N";
+            }
+            if (odeme == "Kredi Kartı")
+            {
+                return "KK";
+            }
+            return "hepsi";
+        }
 
-                        if (dgvUrunler.Columns.Contains("Toplam ₺"))
-                            dgvUrunler.Columns["Toplam ₺"].DefaultCellStyle.Format = "₺#,##0.00";
+        private void BtnCsv_Click(object sender, EventArgs e)
+        {
+            if (!(dgvRapor.DataSource is DataTable dt) || dt.Rows.Count == 0)
+            {
+                MessageBox.Show("Önce rapor alın.", "CSV", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using (SaveFileDialog dialog = new SaveFileDialog())
+            {
+                dialog.Filter = "CSV Dosyası|*.csv";
+                dialog.FileName = $"rapor_{DateTime.Now:yyyyMMdd_HHmm}.csv";
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    Yardimcilar.DataTableToCsv(dt, dialog.FileName);
+                    MessageBox.Show("CSV oluşturuldu.", "CSV", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+        }
+
+        private void GuncelleOzet(DataTable dt)
+        {
+            int kayit = dt?.Rows.Count ?? 0;
+            string toplamMetin = "";
+            if (dt != null)
+            {
+                decimal toplam = 0m;
+                string[] adaylar = { "ToplamNet", "ToplamTutar", "ToplamBrut", "Toplam", "NetBakiye" };
+                foreach (string kolon in adaylar)
+                {
+                    if (dt.Columns.Contains(kolon))
+                    {
+                        foreach (DataRow row in dt.Rows)
+                        {
+                            if (row[kolon] != DBNull.Value)
+                            {
+                                toplam += Convert.ToDecimal(row[kolon]);
+                            }
+                        }
+                        toplamMetin = $" | Toplam: {Yardimcilar.ParaFormatla(toplam)}";
+                        break;
                     }
                 }
             }
-            catch { }
+            lblOzet.Text = $"Kayıt: {kayit}{toplamMetin}";
+        }
+
+        private void SetLoading(bool loading)
+        {
+            UseWaitCursor = loading;
+            panelFiltre.Enabled = !loading;
+            panelAlt.Enabled = !loading;
+            dgvRapor.Enabled = !loading;
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.F5)
+            {
+                _ = RaporuGetirAsync();
+                return true;
+            }
+            if (keyData == (Keys.Control | Keys.E))
+            {
+                BtnCsv_Click(this, EventArgs.Empty);
+                return true;
+            }
+            if (keyData == Keys.Escape)
+            {
+                Close();
+                return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private class UrunSecimForm : Form
+        {
+            private readonly TextBox txtArama;
+            private readonly DataGridView dgvUrun;
+            private readonly Button btnSec;
+            public int? SeciliStokId { get; private set; }
+            public string SeciliUrun { get; private set; }
+
+            public UrunSecimForm(string arama)
+            {
+                Text = "Ürün Seç";
+                Size = new Size(720, 480);
+                StartPosition = FormStartPosition.CenterParent;
+
+                Label lblArama = new Label { Text = "Arama", Location = new Point(16, 16), AutoSize = true };
+                txtArama = new TextBox { Location = new Point(16, 40), Width = 320, Text = arama ?? string.Empty };
+                Button btnAra = new Button { Text = "Ara", Location = new Point(348, 38), Width = 80 };
+                btnAra.Click += (s, e) => ListeyiDoldur();
+
+                dgvUrun = new DataGridView
+                {
+                    Location = new Point(16, 80),
+                    Size = new Size(670, 300),
+                    ReadOnly = true,
+                    AllowUserToAddRows = false,
+                    SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                    RowHeadersVisible = false,
+                    AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
+                };
+                dgvUrun.DoubleClick += (s, e) => Sec();
+                Yardimcilar.DoubleBufferedAktifEt(dgvUrun);
+
+                btnSec = new Button
+                {
+                    Text = "Seç",
+                    Location = new Point(596, 392),
+                    Width = 90,
+                    Height = 32
+                };
+                btnSec.Click += (s, e) => Sec();
+
+                Controls.AddRange(new Control[] { lblArama, txtArama, btnAra, dgvUrun, btnSec });
+
+                ListeyiDoldur();
+            }
+
+            private void ListeyiDoldur()
+            {
+                string arama = txtArama.Text.Trim();
+                DataTable dt = VeriKatmani.UrunAra(arama);
+                dgvUrun.DataSource = dt;
+            }
+
+            private void Sec()
+            {
+                if (dgvUrun.CurrentRow == null)
+                {
+                    return;
+                }
+
+                if (dgvUrun.CurrentRow.DataBoundItem is DataRowView row)
+                {
+                    SeciliStokId = Convert.ToInt32(row["nStokID"]);
+                    SeciliUrun = $"{row["sKodu"]} - {row["sAciklama"]}";
+                    DialogResult = DialogResult.OK;
+                }
+            }
         }
     }
 }
