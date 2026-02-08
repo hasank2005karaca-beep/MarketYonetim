@@ -1472,6 +1472,537 @@ WHERE b.sBarkod = @barkod";
             public string Aciklama { get; set; }
         }
 
+        private class CariIslemBilgisi
+        {
+            public bool Destekli { get; set; }
+            public string TarihKolon { get; set; }
+            public string TutarKolon { get; set; }
+            public string TipKolon { get; set; }
+            public string AciklamaKolon { get; set; }
+            public string OdemeSekliKolon { get; set; }
+            public string IdKolon { get; set; }
+            public bool IdIdentity { get; set; }
+        }
+
+        private static bool TabloVarMi(SqlConnection conn, SqlTransaction tran, string tablo)
+        {
+            const string sql = @"SELECT COUNT(1)
+FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_NAME = @tablo";
+            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
+            {
+                cmd.Parameters.AddWithValue("@tablo", tablo);
+                object sonuc = cmd.ExecuteScalar();
+                return sonuc != null && sonuc != DBNull.Value && Convert.ToInt32(sonuc) > 0;
+            }
+        }
+
+        private static CariIslemBilgisi CariIslemBilgileriniGetir(SqlConnection conn, SqlTransaction tran)
+        {
+            CariIslemBilgisi bilgi = new CariIslemBilgisi();
+            if (!TabloVarMi(conn, tran, "tbCariIslem"))
+            {
+                return bilgi;
+            }
+
+            HashSet<string> kolonlar = TabloKolonlariniGetir(conn, tran, "tbCariIslem");
+            if (!kolonlar.Contains("nMusteriID"))
+            {
+                return bilgi;
+            }
+
+            string tarihKolon = IlkKolonuBul(kolonlar, "dTarih", "dteIslemTarihi", "dteTarih");
+            string tutarKolon = IlkKolonuBul(kolonlar, "lTutar", "nTutar", "lAlacak", "lTahsilat");
+            string tipKolon = IlkKolonuBul(kolonlar, "sIslemTipi", "sTip");
+            string aciklamaKolon = IlkKolonuBul(kolonlar, "sAciklama", "sNot");
+            string odemeKolon = IlkKolonuBul(kolonlar, "sOdemeSekli", "sOdemeTipi");
+            string idKolon = IlkKolonuBul(kolonlar, "nCariIslemID", "nIslemID", "nTahsilatID");
+
+            if (string.IsNullOrWhiteSpace(tarihKolon) || string.IsNullOrWhiteSpace(tutarKolon))
+            {
+                return bilgi;
+            }
+
+            bool kimlikVar = !string.IsNullOrWhiteSpace(tipKolon) || !string.IsNullOrWhiteSpace(aciklamaKolon);
+            if (!kimlikVar)
+            {
+                return bilgi;
+            }
+
+            bilgi.Destekli = true;
+            bilgi.TarihKolon = tarihKolon;
+            bilgi.TutarKolon = tutarKolon;
+            bilgi.TipKolon = tipKolon;
+            bilgi.AciklamaKolon = aciklamaKolon;
+            bilgi.OdemeSekliKolon = odemeKolon;
+            bilgi.IdKolon = idKolon;
+            if (!string.IsNullOrWhiteSpace(idKolon))
+            {
+                bilgi.IdIdentity = IdentityKolonVarMi(conn, tran, "tbCariIslem", idKolon);
+            }
+
+            return bilgi;
+        }
+
+        public static bool CariIslemDestekleniyor()
+        {
+            using (SqlConnection conn = BaglantiOlustur())
+            {
+                conn.Open();
+                return CariIslemBilgileriniGetir(conn, null).Destekli;
+            }
+        }
+
+        public static int MusteriSayisiGetir(string arama)
+        {
+            const string sql = @"SELECT COUNT(1)
+FROM tbMusteri
+WHERE (@arama IS NULL OR @arama = ''
+    OR sAdi LIKE @arama + '%'
+    OR sSoyadi LIKE @arama + '%'
+    OR sVergiNo LIKE @arama + '%'
+    OR sEmail LIKE @arama + '%')";
+            object sonuc = SorguCalistirScalar(
+                sql,
+                Parametre("@arama", string.IsNullOrWhiteSpace(arama) ? null : arama)
+            );
+            return sonuc == null || sonuc == DBNull.Value ? 0 : Convert.ToInt32(sonuc);
+        }
+
+        public static DataTable MusterileriGetir(string arama, int sayfa = 0, int sayfaBoyutu = 50)
+        {
+            int offset = Math.Max(0, sayfa) * sayfaBoyutu;
+            const string sql = @"
+SELECT nMusteriID,
+       sAdi,
+       sSoyadi,
+       sTelefon1,
+       sEmail,
+       sVergiNo
+FROM tbMusteri
+WHERE (@arama IS NULL OR @arama = ''
+    OR sAdi LIKE @arama + '%'
+    OR sSoyadi LIKE @arama + '%'
+    OR sVergiNo LIKE @arama + '%'
+    OR sEmail LIKE @arama + '%')
+ORDER BY nMusteriID DESC
+OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
+
+            return SorguCalistirDataTable(
+                sql,
+                Parametre("@arama", string.IsNullOrWhiteSpace(arama) ? null : arama),
+                Parametre("@offset", offset),
+                Parametre("@sayfaBoyutu", sayfaBoyutu)
+            );
+        }
+
+        public static DataRow MusteriDetayGetir(int musteriId)
+        {
+            const string sql = @"SELECT TOP 1 * FROM tbMusteri WHERE nMusteriID = @id";
+            DataTable dt = SorguCalistirDataTable(sql, Parametre("@id", musteriId));
+            return dt.Rows.Count > 0 ? dt.Rows[0] : null;
+        }
+
+        public static int MusteriEkle(
+            string adi, string soyadi,
+            string evTelefonu, string isTelefonu,
+            string email,
+            string evAdresi1, string evIl, string evSemt,
+            string vergiNo, string vergiDairesi
+        )
+        {
+            return TransactionCalistir((conn, tran) =>
+            {
+                bool identity = IdentityKolonVarMi(conn, tran, "tbMusteri", "nMusteriID");
+                int musteriId = identity ? 0 : YeniIdUret(conn, tran, "tbMusteri", "nMusteriID");
+                Dictionary<string, object> kolonlar = new Dictionary<string, object>
+                {
+                    ["nMusteriID"] = musteriId,
+                    ["sAdi"] = adi,
+                    ["sSoyadi"] = soyadi,
+                    ["sTelefon1"] = evTelefonu,
+                    ["sTelefon2"] = isTelefonu,
+                    ["sEmail"] = email,
+                    ["sAdres"] = evAdresi1,
+                    ["sIl"] = evIl,
+                    ["sSemt"] = evSemt,
+                    ["sVergiNo"] = vergiNo,
+                    ["sVergiDairesi"] = vergiDairesi
+                };
+
+                int yeniId = DinamikInsert(conn, tran, "tbMusteri", kolonlar, identity);
+                return identity ? yeniId : musteriId;
+            });
+        }
+
+        public static void MusteriGuncelle(
+            int musteriId,
+            string adi, string soyadi,
+            string evTelefonu, string isTelefonu,
+            string email,
+            string evAdresi1, string evIl, string evSemt,
+            string vergiNo, string vergiDairesi
+        )
+        {
+            TransactionCalistir((conn, tran) =>
+            {
+                HashSet<string> kolonlar = TabloKolonlariniGetir(conn, tran, "tbMusteri");
+                Dictionary<string, object> guncellenecek = new Dictionary<string, object>();
+                if (kolonlar.Contains("sAdi")) guncellenecek["sAdi"] = adi;
+                if (kolonlar.Contains("sSoyadi")) guncellenecek["sSoyadi"] = soyadi;
+                if (kolonlar.Contains("sTelefon1")) guncellenecek["sTelefon1"] = evTelefonu;
+                if (kolonlar.Contains("sTelefon2")) guncellenecek["sTelefon2"] = isTelefonu;
+                if (kolonlar.Contains("sEmail")) guncellenecek["sEmail"] = email;
+                if (kolonlar.Contains("sAdres")) guncellenecek["sAdres"] = evAdresi1;
+                if (kolonlar.Contains("sIl")) guncellenecek["sIl"] = evIl;
+                if (kolonlar.Contains("sSemt")) guncellenecek["sSemt"] = evSemt;
+                if (kolonlar.Contains("sVergiNo")) guncellenecek["sVergiNo"] = vergiNo;
+                if (kolonlar.Contains("sVergiDairesi")) guncellenecek["sVergiDairesi"] = vergiDairesi;
+
+                if (guncellenecek.Count == 0)
+                {
+                    throw new InvalidOperationException("Güncellenecek müşteri alanı bulunamadı.");
+                }
+
+                StringBuilder sql = new StringBuilder();
+                sql.Append("UPDATE tbMusteri SET ");
+                sql.Append(string.Join(", ", guncellenecek.Keys.Select(k => $"{k} = @{k}")));
+                sql.Append(" WHERE nMusteriID = @id");
+
+                using (SqlCommand cmd = new SqlCommand(sql.ToString(), conn, tran))
+                {
+                    foreach (var item in guncellenecek)
+                    {
+                        cmd.Parameters.AddWithValue("@" + item.Key, item.Value ?? DBNull.Value);
+                    }
+                    cmd.Parameters.AddWithValue("@id", musteriId);
+                    cmd.ExecuteNonQuery();
+                }
+            });
+        }
+
+        public static void MusteriSil(int musteriId)
+        {
+            TransactionCalistir((conn, tran) =>
+            {
+                HashSet<string> alisverisKolon = TabloKolonlariniGetir(conn, tran, "tbAlisVeris");
+                if (alisverisKolon.Contains("nMusteriID"))
+                {
+                    const string sql = @"SELECT COUNT(1) FROM tbAlisVeris WHERE nMusteriID = @id";
+                    using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
+                    {
+                        cmd.Parameters.AddWithValue("@id", musteriId);
+                        int adet = Convert.ToInt32(cmd.ExecuteScalar());
+                        if (adet > 0)
+                        {
+                            throw new InvalidOperationException("Bu müşteri geçmiş hareket içeriyor, silinemez.");
+                        }
+                    }
+                }
+
+                HashSet<string> stokDetayKolon = TabloKolonlariniGetir(conn, tran, "tbStokFisiDetayi");
+                if (stokDetayKolon.Contains("nMusteriID"))
+                {
+                    const string sql = @"SELECT COUNT(1) FROM tbStokFisiDetayi WHERE nMusteriID = @id";
+                    using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
+                    {
+                        cmd.Parameters.AddWithValue("@id", musteriId);
+                        int adet = Convert.ToInt32(cmd.ExecuteScalar());
+                        if (adet > 0)
+                        {
+                            throw new InvalidOperationException("Bu müşteri geçmiş hareket içeriyor, silinemez.");
+                        }
+                    }
+                }
+
+                const string silSql = @"DELETE FROM tbMusteri WHERE nMusteriID = @id";
+                using (SqlCommand cmd = new SqlCommand(silSql, conn, tran))
+                {
+                    cmd.Parameters.AddWithValue("@id", musteriId);
+                    cmd.ExecuteNonQuery();
+                }
+            });
+        }
+
+        public static decimal MusteriVeresiyeBakiyeGetir(int musteriId, DateTime? bas = null, DateTime? bit = null)
+        {
+            return TransactionCalistir((conn, tran) =>
+            {
+                HashSet<string> kolonlar = TabloKolonlariniGetir(conn, tran, "tbAlisVeris");
+                string tarihKolon = IlkKolonuBul(kolonlar, "dTarih", "dteFisTarihi", "dteIslemTarihi");
+                bool fisTipiVar = kolonlar.Contains("sFisTipi");
+
+                StringBuilder sql = new StringBuilder();
+                sql.Append("SELECT SUM(ISNULL(lNetTutar, 0)) FROM tbAlisVeris WHERE nMusteriID = @id");
+                if (fisTipiVar)
+                {
+                    sql.Append(" AND sFisTipi = @fisTipi");
+                }
+                if (!string.IsNullOrWhiteSpace(tarihKolon))
+                {
+                    if (bas.HasValue)
+                    {
+                        sql.Append($" AND {tarihKolon} >= @bas");
+                    }
+                    if (bit.HasValue)
+                    {
+                        sql.Append($" AND {tarihKolon} <= @bit");
+                    }
+                }
+
+                using (SqlCommand cmd = new SqlCommand(sql.ToString(), conn, tran))
+                {
+                    cmd.Parameters.AddWithValue("@id", musteriId);
+                    if (fisTipiVar)
+                    {
+                        cmd.Parameters.AddWithValue("@fisTipi", "KR");
+                    }
+                    if (bas.HasValue)
+                    {
+                        cmd.Parameters.AddWithValue("@bas", bas.Value.Date);
+                    }
+                    if (bit.HasValue)
+                    {
+                        cmd.Parameters.AddWithValue("@bit", bit.Value.Date.AddDays(1).AddSeconds(-1));
+                    }
+
+                    object sonuc = cmd.ExecuteScalar();
+                    decimal borc = sonuc == null || sonuc == DBNull.Value ? 0m : Convert.ToDecimal(sonuc);
+
+                    CariIslemBilgisi cari = CariIslemBilgileriniGetir(conn, tran);
+                    if (!cari.Destekli)
+                    {
+                        return borc;
+                    }
+
+                    StringBuilder tahsilatSql = new StringBuilder();
+                    tahsilatSql.Append($"SELECT SUM(ISNULL({cari.TutarKolon}, 0)) FROM tbCariIslem WHERE nMusteriID = @id");
+                    if (!string.IsNullOrWhiteSpace(cari.TipKolon))
+                    {
+                        tahsilatSql.Append($" AND {cari.TipKolon} = @tip");
+                    }
+                    else if (!string.IsNullOrWhiteSpace(cari.AciklamaKolon))
+                    {
+                        tahsilatSql.Append($" AND {cari.AciklamaKolon} LIKE @aciklama");
+                    }
+
+                    if (bas.HasValue)
+                    {
+                        tahsilatSql.Append($" AND {cari.TarihKolon} >= @bas");
+                    }
+                    if (bit.HasValue)
+                    {
+                        tahsilatSql.Append($" AND {cari.TarihKolon} <= @bit");
+                    }
+
+                    using (SqlCommand cmdTah = new SqlCommand(tahsilatSql.ToString(), conn, tran))
+                    {
+                        cmdTah.Parameters.AddWithValue("@id", musteriId);
+                        if (!string.IsNullOrWhiteSpace(cari.TipKolon))
+                        {
+                            cmdTah.Parameters.AddWithValue("@tip", "TAHSILAT");
+                        }
+                        else if (!string.IsNullOrWhiteSpace(cari.AciklamaKolon))
+                        {
+                            cmdTah.Parameters.AddWithValue("@aciklama", "TAHSILAT:%");
+                        }
+                        if (bas.HasValue)
+                        {
+                            cmdTah.Parameters.AddWithValue("@bas", bas.Value.Date);
+                        }
+                        if (bit.HasValue)
+                        {
+                            cmdTah.Parameters.AddWithValue("@bit", bit.Value.Date.AddDays(1).AddSeconds(-1));
+                        }
+
+                        object tah = cmdTah.ExecuteScalar();
+                        decimal alacak = tah == null || tah == DBNull.Value ? 0m : Convert.ToDecimal(tah);
+                        return borc - alacak;
+                    }
+                }
+            });
+        }
+
+        public static DataTable MusteriEkstreGetir(int musteriId, DateTime bas, DateTime bit)
+        {
+            return TransactionCalistir((conn, tran) =>
+            {
+                DataTable sonuc = new DataTable();
+                sonuc.Columns.Add("Tarih", typeof(DateTime));
+                sonuc.Columns.Add("Tip", typeof(string));
+                sonuc.Columns.Add("Aciklama", typeof(string));
+                sonuc.Columns.Add("Borc", typeof(decimal));
+                sonuc.Columns.Add("Alacak", typeof(decimal));
+                sonuc.Columns.Add("Bakiye", typeof(decimal));
+
+                HashSet<string> kolonlar = TabloKolonlariniGetir(conn, tran, "tbAlisVeris");
+                string tarihKolon = IlkKolonuBul(kolonlar, "dTarih", "dteFisTarihi", "dteIslemTarihi");
+                bool fisTipiVar = kolonlar.Contains("sFisTipi");
+                string fisNoKolon = IlkKolonuBul(kolonlar, "sFisNo", "lFisNo");
+
+                string tarihSecim = string.IsNullOrWhiteSpace(tarihKolon) ? "NULL" : tarihKolon;
+                string fisNoSecim = string.IsNullOrWhiteSpace(fisNoKolon)
+                    ? "CONVERT(VARCHAR(20), nAlisverisID)"
+                    : $"ISNULL(CONVERT(VARCHAR(50), {fisNoKolon}), CONVERT(VARCHAR(20), nAlisverisID))";
+
+                StringBuilder satisSql = new StringBuilder();
+                satisSql.Append($"SELECT {tarihSecim} AS Tarih, 'SATIŞ' AS Tip, {fisNoSecim} AS Aciklama,");
+                satisSql.Append(" ISNULL(lNetTutar, 0) AS Borc, CAST(0 AS decimal(18,2)) AS Alacak");
+                satisSql.Append(" FROM tbAlisVeris WHERE nMusteriID = @id");
+                if (fisTipiVar)
+                {
+                    satisSql.Append(" AND sFisTipi = @fisTipi");
+                }
+                if (!string.IsNullOrWhiteSpace(tarihKolon))
+                {
+                    satisSql.Append($" AND {tarihKolon} >= @bas AND {tarihKolon} <= @bit");
+                }
+
+                using (SqlCommand cmd = new SqlCommand(satisSql.ToString(), conn, tran))
+                {
+                    cmd.Parameters.AddWithValue("@id", musteriId);
+                    if (fisTipiVar)
+                    {
+                        cmd.Parameters.AddWithValue("@fisTipi", "KR");
+                    }
+                    if (!string.IsNullOrWhiteSpace(tarihKolon))
+                    {
+                        cmd.Parameters.AddWithValue("@bas", bas.Date);
+                        cmd.Parameters.AddWithValue("@bit", bit.Date.AddDays(1).AddSeconds(-1));
+                    }
+
+                    using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                    {
+                        DataTable satislar = new DataTable();
+                        adapter.Fill(satislar);
+                        foreach (DataRow row in satislar.Rows)
+                        {
+                            DateTime tarih = row["Tarih"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(row["Tarih"]);
+                            sonuc.Rows.Add(tarih, row["Tip"], row["Aciklama"], row["Borc"], row["Alacak"], 0m);
+                        }
+                    }
+                }
+
+                CariIslemBilgisi cari = CariIslemBilgileriniGetir(conn, tran);
+                if (cari.Destekli)
+                {
+                    StringBuilder tahSql = new StringBuilder();
+                    tahSql.Append($"SELECT {cari.TarihKolon} AS Tarih, 'TAHSILAT' AS Tip,");
+                    if (!string.IsNullOrWhiteSpace(cari.AciklamaKolon))
+                    {
+                        tahSql.Append($" {cari.AciklamaKolon} AS Aciklama,");
+                    }
+                    else
+                    {
+                        tahSql.Append(" CAST('TAHSILAT' AS NVARCHAR(100)) AS Aciklama,");
+                    }
+                    tahSql.Append(" CAST(0 AS decimal(18,2)) AS Borc,");
+                    tahSql.Append($" ISNULL({cari.TutarKolon}, 0) AS Alacak");
+                    tahSql.Append(" FROM tbCariIslem WHERE nMusteriID = @id");
+                    if (!string.IsNullOrWhiteSpace(cari.TipKolon))
+                    {
+                        tahSql.Append($" AND {cari.TipKolon} = @tip");
+                    }
+                    else if (!string.IsNullOrWhiteSpace(cari.AciklamaKolon))
+                    {
+                        tahSql.Append($" AND {cari.AciklamaKolon} LIKE @aciklama");
+                    }
+                    tahSql.Append($" AND {cari.TarihKolon} >= @bas AND {cari.TarihKolon} <= @bit");
+
+                    using (SqlCommand cmd = new SqlCommand(tahSql.ToString(), conn, tran))
+                    {
+                        cmd.Parameters.AddWithValue("@id", musteriId);
+                        cmd.Parameters.AddWithValue("@bas", bas.Date);
+                        cmd.Parameters.AddWithValue("@bit", bit.Date.AddDays(1).AddSeconds(-1));
+                        if (!string.IsNullOrWhiteSpace(cari.TipKolon))
+                        {
+                            cmd.Parameters.AddWithValue("@tip", "TAHSILAT");
+                        }
+                        else if (!string.IsNullOrWhiteSpace(cari.AciklamaKolon))
+                        {
+                            cmd.Parameters.AddWithValue("@aciklama", "TAHSILAT:%");
+                        }
+
+                        using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                        {
+                            DataTable tahsilatlar = new DataTable();
+                            adapter.Fill(tahsilatlar);
+                            foreach (DataRow row in tahsilatlar.Rows)
+                            {
+                                DateTime tarih = row["Tarih"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(row["Tarih"]);
+                                sonuc.Rows.Add(tarih, row["Tip"], row["Aciklama"], row["Borc"], row["Alacak"], 0m);
+                            }
+                        }
+                    }
+                }
+
+                List<DataRow> sirali = sonuc.AsEnumerable()
+                    .OrderBy(r => r.Field<DateTime>("Tarih"))
+                    .ThenBy(r => r.Field<string>("Tip"))
+                    .ToList();
+
+                decimal bakiye = 0m;
+                foreach (DataRow row in sirali)
+                {
+                    decimal borc = row.Field<decimal>("Borc");
+                    decimal alacak = row.Field<decimal>("Alacak");
+                    bakiye += borc - alacak;
+                    row["Bakiye"] = bakiye;
+                }
+
+                DataTable final = sonuc.Clone();
+                foreach (DataRow row in sirali)
+                {
+                    final.ImportRow(row);
+                }
+
+                return final;
+            });
+        }
+
+        public static void VeresiyeTahsilatEkle(
+            int musteriId,
+            DateTime tarih,
+            string odemeSekli,
+            decimal tutar,
+            string aciklama
+        )
+        {
+            TransactionCalistir((conn, tran) =>
+            {
+                CariIslemBilgisi cari = CariIslemBilgileriniGetir(conn, tran);
+                if (!cari.Destekli)
+                {
+                    throw new InvalidOperationException("Cari hareket tablosu bulunamadı.");
+                }
+
+                Dictionary<string, object> kolonlar = new Dictionary<string, object>();
+                if (!string.IsNullOrWhiteSpace(cari.IdKolon) && !cari.IdIdentity)
+                {
+                    kolonlar[cari.IdKolon] = YeniIdUret(conn, tran, "tbCariIslem", cari.IdKolon);
+                }
+
+                kolonlar["nMusteriID"] = musteriId;
+                kolonlar[cari.TarihKolon] = tarih;
+                kolonlar[cari.TutarKolon] = tutar;
+                if (!string.IsNullOrWhiteSpace(cari.TipKolon))
+                {
+                    kolonlar[cari.TipKolon] = "TAHSILAT";
+                }
+                if (!string.IsNullOrWhiteSpace(cari.OdemeSekliKolon))
+                {
+                    kolonlar[cari.OdemeSekliKolon] = odemeSekli;
+                }
+                if (!string.IsNullOrWhiteSpace(cari.AciklamaKolon))
+                {
+                    string aciklamaMetin = string.IsNullOrWhiteSpace(aciklama) ? "TAHSILAT" : $"TAHSILAT: {aciklama}";
+                    kolonlar[cari.AciklamaKolon] = aciklamaMetin;
+                }
+
+                DinamikInsert(conn, tran, "tbCariIslem", kolonlar, cari.IdIdentity && !string.IsNullOrWhiteSpace(cari.IdKolon));
+            });
+        }
+
         public static SqlParameter Parametre(string ad, object deger)
         {
             return new SqlParameter(ad, deger ?? DBNull.Value);

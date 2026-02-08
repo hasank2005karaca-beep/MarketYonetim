@@ -1,6 +1,5 @@
 using System;
 using System.Data;
-using System.Data.SqlClient;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -10,7 +9,8 @@ namespace MarketYonetim
     {
         private DataGridView dgvMusteriler;
         private TextBox txtArama;
-        
+        private Timer aramaTimer;
+
         public int SecilenMusteriId { get; private set; }
         public string SecilenMusteriAdi { get; private set; }
 
@@ -37,7 +37,7 @@ namespace MarketYonetim
 
             Label lblBaslik = new Label
             {
-                Text = "👤 Müşteri Seç (70 müşteri)",
+                Text = "👤 Müşteri Seç",
                 Font = new Font("Segoe UI", 18, FontStyle.Bold),
                 ForeColor = Color.White,
                 AutoSize = true,
@@ -49,7 +49,7 @@ namespace MarketYonetim
                 Location = new Point(350, 20),
                 Size = new Size(300, 30),
                 Font = new Font("Segoe UI", 12),
-                PlaceholderText = "🔍 Müşteri ara..."
+                PlaceholderText = "🔍 Ad/Soyad/VergiNo/Telefon"
             };
             txtArama.TextChanged += TxtArama_TextChanged;
 
@@ -73,6 +73,10 @@ namespace MarketYonetim
             dgvMusteriler.ColumnHeadersHeight = 40;
             dgvMusteriler.EnableHeadersVisualStyles = false;
             dgvMusteriler.CellDoubleClick += DgvMusteriler_CellDoubleClick;
+            dgvMusteriler.KeyDown += DgvMusteriler_KeyDown;
+
+            aramaTimer = new Timer { Interval = 300 };
+            aramaTimer.Tick += AramaTimer_Tick;
 
             Panel panelAlt = new Panel
             {
@@ -115,35 +119,26 @@ namespace MarketYonetim
         {
             try
             {
-                using (SqlConnection conn = new SqlConnection(Ayarlar.ConnectionString))
+                string arama = string.IsNullOrWhiteSpace(filtre) || filtre.Length < 2 ? null : filtre;
+                DataTable dt = VeriKatmani.MusterileriGetir(arama, 0, 200);
+                dt.Columns.Add("Müşteri Adı", typeof(string));
+                foreach (DataRow row in dt.Rows)
                 {
-                    string sql = @"
-                        SELECT 
-                            nMusteriID as 'ID',
-                            sAdi + ' ' + ISNULL(sSoyadi, '') as 'Müşteri Adı',
-                            ISNULL(sTelefon1, '') as 'Telefon',
-                            ISNULL(sIl, '') as 'İl',
-                            ISNULL(sAdres, '') as 'Adres'
-                        FROM tbMusteri WHERE 1=1";
+                    string adi = row["sAdi"]?.ToString() ?? string.Empty;
+                    string soyadi = row["sSoyadi"]?.ToString() ?? string.Empty;
+                    row["Müşteri Adı"] = string.Format("{0} {1}", adi, soyadi).Trim();
+                }
 
-                    if (!string.IsNullOrEmpty(filtre))
-                    {
-                        sql += " AND (sAdi LIKE @filtre OR sSoyadi LIKE @filtre OR sTelefon1 LIKE @filtre)";
-                    }
-                    sql += " ORDER BY sAdi";
+                if (dt.Columns.Contains("nMusteriID")) dt.Columns["nMusteriID"].ColumnName = "ID";
+                if (dt.Columns.Contains("sTelefon1")) dt.Columns["sTelefon1"].ColumnName = "Telefon";
+                if (dt.Columns.Contains("sEmail")) dt.Columns["sEmail"].ColumnName = "E-posta";
+                if (dt.Columns.Contains("sVergiNo")) dt.Columns["sVergiNo"].ColumnName = "Vergi No";
 
-                    using (SqlDataAdapter adapter = new SqlDataAdapter(sql, conn))
-                    {
-                        if (!string.IsNullOrEmpty(filtre))
-                            adapter.SelectCommand.Parameters.AddWithValue("@filtre", $"%{filtre}%");
+                dgvMusteriler.DataSource = dt;
 
-                        DataTable dt = new DataTable();
-                        adapter.Fill(dt);
-                        dgvMusteriler.DataSource = dt;
-                        
-                        if (dgvMusteriler.Columns.Contains("ID"))
-                            dgvMusteriler.Columns["ID"].Visible = false;
-                    }
+                if (dgvMusteriler.Columns.Contains("ID"))
+                {
+                    dgvMusteriler.Columns["ID"].Visible = false;
                 }
             }
             catch (Exception ex)
@@ -154,12 +149,28 @@ namespace MarketYonetim
 
         private void TxtArama_TextChanged(object sender, EventArgs e)
         {
+            aramaTimer.Stop();
+            aramaTimer.Start();
+        }
+
+        private void AramaTimer_Tick(object sender, EventArgs e)
+        {
+            aramaTimer.Stop();
             MusterileriYukle(txtArama.Text.Trim());
         }
 
         private void DgvMusteriler_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex >= 0) BtnSec_Click(null, null);
+        }
+
+        private void DgvMusteriler_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter)
+            {
+                BtnSec_Click(null, null);
+                e.Handled = true;
+            }
         }
 
         private void BtnSec_Click(object sender, EventArgs e)
