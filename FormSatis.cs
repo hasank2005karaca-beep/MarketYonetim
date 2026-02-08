@@ -674,6 +674,15 @@ namespace MarketYonetim
                     e.FormattingApplied = true;
                 }
             }
+
+            if (dgvSepet.Columns[e.ColumnIndex].DataPropertyName == "nKdvOrani")
+            {
+                if (e.Value != null)
+                {
+                    e.Value = Yardimcilar.KdvOraniYuzdeGoster(Convert.ToDecimal(e.Value));
+                    e.FormattingApplied = true;
+                }
+            }
         }
 
         private void DgvSepet_CellEndEdit(object sender, DataGridViewCellEventArgs e)

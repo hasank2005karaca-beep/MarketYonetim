@@ -46,11 +46,13 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Ayarlar.cs" />
+    <Compile Include="DiscoveryKilit.cs" />
     <Compile Include="FormAyarlar.cs" />
     <Compile Include="FormBarkodYonetimi.cs" />
     <Compile Include="FormFiyatDuzenle.cs" />
     <Compile Include="FormFiyatYonetimi.cs" />
     <!-- S7-FIX: Eksik form dosyaları -->
+    <Compile Include="KdvDagitimSonuc.cs" />
     <Compile Include="FormMusteriYonetimi.cs" />
     <Compile Include="FormMusteriSec.cs" />
     <Compile Include="FormOdeme.cs" />
