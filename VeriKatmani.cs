@@ -1050,6 +1050,334 @@ WHERE CAST(dteFisTarihi AS date) = CAST(GETDATE() AS date);";
            return SorguCalistirDataTable(sql);
        }
 
+        public static DataTable SatisRaporuGetir(DateTime baslangic, DateTime bitis, string odemeSekli, string kasiyerRumuzu)
+        {
+            using (SqlConnection conn = BaglantiOlustur())
+            {
+                conn.Open();
+                HashSet<string> alisKolonlar = TabloKolonlariniGetir(conn, null, "tbAlisVeris");
+                HashSet<string> odemeKolonlar = TabloKolonlariniGetir(conn, null, "tbOdeme");
+
+                string tarihKolon = IlkKolonuBul(alisKolonlar, "dteFaturaTarihi", "dteFisTarihi", "dteKayitTarihi", "dteIslemTarihi");
+                if (string.IsNullOrWhiteSpace(tarihKolon))
+                {
+                    return new DataTable();
+                }
+                string netKolon = IlkKolonuBul(alisKolonlar, "lNetTutar", "lToplamTutar", "lToplam", "lTutar");
+                string kdvKolon = IlkKolonuBul(alisKolonlar, "lToplamKdv", "lKdvToplam", "lKdv");
+                string brutKolon = IlkKolonuBul(alisKolonlar, "lToplamTutar", "lBrutTutar", "lMalBedeli");
+                string kasiyerKolon = IlkKolonuBul(alisKolonlar, "sKasiyer", "sKullaniciAdi", "sKasiyerRumuzu");
+                string odemeTipKolon = IlkKolonuBul(odemeKolonlar, "sOdemeSekli", "sOdemeTipi");
+
+                string netExpr = string.IsNullOrWhiteSpace(netKolon) ? "0" : $"ISNULL(a.{netKolon}, 0)";
+                string kdvExpr = string.IsNullOrWhiteSpace(kdvKolon) ? "0" : $"ISNULL(a.{kdvKolon}, 0)";
+                string brutExpr = string.IsNullOrWhiteSpace(brutKolon) ? "0" : $"ISNULL(a.{brutKolon}, 0)";
+
+                string odemeAlt = string.Empty;
+                if (!string.IsNullOrWhiteSpace(odemeTipKolon))
+                {
+                    odemeAlt = $@"
+LEFT JOIN (
+    SELECT nAlisverisID,
+           SUM(CASE WHEN {odemeTipKolon} LIKE '%Nakit%' OR {odemeTipKolon} = 'N' THEN lTutar ELSE 0 END) AS NakitToplam,
+           SUM(CASE WHEN {odemeTipKolon} LIKE '%Kart%' OR {odemeTipKolon} LIKE '%Kredi%' OR {odemeTipKolon} = 'KK' THEN lTutar ELSE 0 END) AS KrediKartiToplam
+    FROM tbOdeme
+    GROUP BY nAlisverisID
+) o ON o.nAlisverisID = a.nAlisverisID";
+                }
+
+                StringBuilder sql = new StringBuilder();
+                sql.Append($@"
+SELECT CAST(a.{tarihKolon} AS date) AS Tarih,
+       COUNT(1) AS IslemSayisi,
+       SUM({netExpr}) AS ToplamNet,
+       SUM({kdvExpr}) AS ToplamKdv,
+       SUM({brutExpr}) AS ToplamBrut,
+       SUM(ISNULL(o.NakitToplam, 0)) AS NakitToplam,
+       SUM(ISNULL(o.KrediKartiToplam, 0)) AS KrediKartiToplam
+FROM tbAlisVeris a
+{odemeAlt}
+WHERE a.{tarihKolon} BETWEEN @baslangic AND @bitis");
+
+                List<SqlParameter> parametreler = new List<SqlParameter>
+                {
+                    Parametre("@baslangic", baslangic),
+                    Parametre("@bitis", bitis)
+                };
+
+                if (!string.IsNullOrWhiteSpace(kasiyerRumuzu) && !string.IsNullOrWhiteSpace(kasiyerKolon))
+                {
+                    sql.Append($" AND a.{kasiyerKolon} = @kasiyer");
+                    parametreler.Add(Parametre("@kasiyer", kasiyerRumuzu));
+                }
+
+                string odemeParam = (odemeSekli ?? "hepsi").ToLowerInvariant();
+                if (odemeParam != "hepsi" && !string.IsNullOrWhiteSpace(odemeTipKolon))
+                {
+                    string odemeFiltre = odemeParam == "n"
+                        ? $"(o2.{odemeTipKolon} LIKE '%Nakit%' OR o2.{odemeTipKolon} = 'N')"
+                        : $"(o2.{odemeTipKolon} LIKE '%Kart%' OR o2.{odemeTipKolon} LIKE '%Kredi%' OR o2.{odemeTipKolon} = 'KK')";
+                    sql.Append($@" AND EXISTS (
+    SELECT 1 FROM tbOdeme o2 WHERE o2.nAlisverisID = a.nAlisverisID AND {odemeFiltre}
+)");
+                }
+
+                sql.Append($" GROUP BY CAST(a.{tarihKolon} AS date) ORDER BY CAST(a.{tarihKolon} AS date)");
+                return SorguCalistirDataTable(sql.ToString(), parametreler.ToArray());
+            }
+        }
+
+        public static DataTable KdvRaporuGetir(DateTime baslangic, DateTime bitis)
+        {
+            using (SqlConnection conn = BaglantiOlustur())
+            {
+                conn.Open();
+                HashSet<string> alisKolonlar = TabloKolonlariniGetir(conn, null, "tbAlisVeris");
+                HashSet<string> siparisKolonlar = TabloKolonlariniGetir(conn, null, "tbAlisverisSiparis");
+
+                string tarihKolon = IlkKolonuBul(alisKolonlar, "dteFaturaTarihi", "dteFisTarihi", "dteKayitTarihi", "dteIslemTarihi");
+                if (string.IsNullOrWhiteSpace(tarihKolon))
+                {
+                    return new DataTable();
+                }
+                List<string> unionlar = new List<string>();
+
+                for (int i = 1; i <= 5; i++)
+                {
+                    string oranKolon = IlkKolonuBul(alisKolonlar, $"nKdvOrani{i}", $"lKdvOrani{i}");
+                    string matrahKolon = IlkKolonuBul(alisKolonlar, $"lKdvMatrahi{i}", $"nKdvMatrahi{i}");
+                    string tutarKolon = IlkKolonuBul(alisKolonlar, $"lKdv{i}", $"lKdvTutar{i}");
+
+                    if (string.IsNullOrWhiteSpace(oranKolon))
+                    {
+                        continue;
+                    }
+
+                    string matrahExpr = string.IsNullOrWhiteSpace(matrahKolon) ? "0" : $"ISNULL(a.{matrahKolon}, 0)";
+                    string tutarExpr = string.IsNullOrWhiteSpace(tutarKolon) ? "0" : $"ISNULL(a.{tutarKolon}, 0)";
+
+                    unionlar.Add($@"
+SELECT a.{oranKolon} AS KdvOrani,
+       SUM({matrahExpr}) AS KdvMatrahiToplam,
+       SUM({tutarExpr}) AS KdvTutarToplam,
+       SUM({matrahExpr} + {tutarExpr}) AS NetToplam
+FROM tbAlisVeris a
+WHERE a.{tarihKolon} BETWEEN @baslangic AND @bitis
+  AND a.{oranKolon} IS NOT NULL
+GROUP BY a.{oranKolon}");
+                }
+
+                if (unionlar.Count > 0)
+                {
+                    string sql = $@"
+SELECT KdvOrani,
+       SUM(KdvMatrahiToplam) AS KdvMatrahiToplam,
+       SUM(KdvTutarToplam) AS KdvTutarToplam,
+       SUM(NetToplam) AS NetToplam
+FROM (
+{string.Join("\nUNION ALL\n", unionlar)}
+) x
+GROUP BY KdvOrani
+ORDER BY KdvOrani";
+                    return SorguCalistirDataTable(sql, Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
+                }
+
+                string kdvOraniKolon = IlkKolonuBul(siparisKolonlar, "lKdvOrani", "nKdvOrani");
+                string kdvTutarKolon = IlkKolonuBul(siparisKolonlar, "lKdvTutar", "nKdvTutar", "lKdv");
+                string netKolon = IlkKolonuBul(siparisKolonlar, "lNetTutar", "lTutar");
+                if (string.IsNullOrWhiteSpace(kdvOraniKolon) || string.IsNullOrWhiteSpace(netKolon))
+                {
+                    return new DataTable();
+                }
+                string matrahExprDetay = string.IsNullOrWhiteSpace(kdvTutarKolon) ? $"ISNULL(d.{netKolon}, 0)" : $"ISNULL(d.{netKolon}, 0) - ISNULL(d.{kdvTutarKolon}, 0)";
+                string kdvTutarExpr = string.IsNullOrWhiteSpace(kdvTutarKolon) ? "0" : $"ISNULL(d.{kdvTutarKolon}, 0)";
+
+                string detaySql = $@"
+SELECT d.{kdvOraniKolon} AS KdvOrani,
+       SUM({matrahExprDetay}) AS KdvMatrahiToplam,
+       SUM({kdvTutarExpr}) AS KdvTutarToplam,
+       SUM(ISNULL(d.{netKolon}, 0)) AS NetToplam
+FROM tbAlisverisSiparis d
+INNER JOIN tbAlisVeris a ON a.nAlisverisID = d.nAlisverisID
+WHERE a.{tarihKolon} BETWEEN @baslangic AND @bitis
+GROUP BY d.{kdvOraniKolon}
+ORDER BY d.{kdvOraniKolon}";
+
+                return SorguCalistirDataTable(detaySql, Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
+            }
+        }
+
+        public static DataTable EnCokSatanlarGetir(DateTime baslangic, DateTime bitis, int topN = 20, string siralama = "adet")
+        {
+            using (SqlConnection conn = BaglantiOlustur())
+            {
+                conn.Open();
+                HashSet<string> detayKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiDetayi");
+                HashSet<string> masterKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiMaster");
+
+                string tarihKolon = IlkKolonuBul(masterKolonlar, "dteFisTarihi", "dteIslemTarihi");
+                string adetKolon = IlkKolonuBul(detayKolonlar, "lCikisMiktar1", "lMiktar");
+                string tutarKolon = IlkKolonuBul(detayKolonlar, "lCikisTutar", "lNetTutar", "lTutar");
+                if (string.IsNullOrWhiteSpace(tarihKolon) || string.IsNullOrWhiteSpace(adetKolon) || string.IsNullOrWhiteSpace(tutarKolon))
+                {
+                    return new DataTable();
+                }
+
+                string sql = $@"
+SELECT TOP (@topN)
+       d.nStokID,
+       s.sKodu,
+       s.sAciklama,
+       SUM(ISNULL(d.{adetKolon}, 0)) AS ToplamAdet,
+       SUM(ISNULL(d.{tutarKolon}, 0)) AS ToplamTutar
+FROM tbStokFisiDetayi d
+INNER JOIN tbStok s ON s.nStokID = d.nStokID
+INNER JOIN tbStokFisiMaster m ON m.nStokFisiID = d.nStokFisiID
+WHERE d.nGirisCikis = 2
+  AND m.{tarihKolon} BETWEEN @baslangic AND @bitis
+GROUP BY d.nStokID, s.sKodu, s.sAciklama
+ORDER BY {(siralama == "tutar" ? "ToplamTutar" : "ToplamAdet")} DESC";
+
+                return SorguCalistirDataTable(
+                    sql,
+                    Parametre("@topN", topN),
+                    Parametre("@baslangic", baslangic),
+                    Parametre("@bitis", bitis)
+                );
+            }
+        }
+
+        public static DataTable UrunSatisPerformansGetir(int stokId, DateTime baslangic, DateTime bitis)
+        {
+            using (SqlConnection conn = BaglantiOlustur())
+            {
+                conn.Open();
+                HashSet<string> detayKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiDetayi");
+                HashSet<string> masterKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiMaster");
+
+                string tarihKolon = IlkKolonuBul(masterKolonlar, "dteFisTarihi", "dteIslemTarihi");
+                string adetKolon = IlkKolonuBul(detayKolonlar, "lCikisMiktar1", "lMiktar");
+                string tutarKolon = IlkKolonuBul(detayKolonlar, "lCikisTutar", "lNetTutar", "lTutar");
+                if (string.IsNullOrWhiteSpace(tarihKolon) || string.IsNullOrWhiteSpace(adetKolon) || string.IsNullOrWhiteSpace(tutarKolon))
+                {
+                    return new DataTable();
+                }
+
+                string sql = $@"
+SELECT CAST(m.{tarihKolon} AS date) AS Tarih,
+       SUM(ISNULL(d.{adetKolon}, 0)) AS Adet,
+       SUM(ISNULL(d.{tutarKolon}, 0)) AS Tutar
+FROM tbStokFisiDetayi d
+INNER JOIN tbStokFisiMaster m ON m.nStokFisiID = d.nStokFisiID
+WHERE d.nGirisCikis = 2
+  AND d.nStokID = @stokId
+  AND m.{tarihKolon} BETWEEN @baslangic AND @bitis
+GROUP BY CAST(m.{tarihKolon} AS date)
+ORDER BY CAST(m.{tarihKolon} AS date)";
+
+                return SorguCalistirDataTable(
+                    sql,
+                    Parametre("@stokId", stokId),
+                    Parametre("@baslangic", baslangic),
+                    Parametre("@bitis", bitis)
+                );
+            }
+        }
+
+        public static DataTable VeresiyeRaporuGetir(DateTime baslangic, DateTime bitis)
+        {
+            using (SqlConnection conn = BaglantiOlustur())
+            {
+                conn.Open();
+                HashSet<string> alisKolonlar = TabloKolonlariniGetir(conn, null, "tbAlisVeris");
+                HashSet<string> odemeKolonlar = TabloKolonlariniGetir(conn, null, "tbOdeme");
+
+                string tarihKolon = IlkKolonuBul(alisKolonlar, "dteFaturaTarihi", "dteFisTarihi", "dteKayitTarihi", "dteIslemTarihi");
+                string netKolon = IlkKolonuBul(alisKolonlar, "lNetTutar", "lToplamTutar", "lTutar");
+                if (string.IsNullOrWhiteSpace(tarihKolon) || string.IsNullOrWhiteSpace(netKolon))
+                {
+                    return new DataTable();
+                }
+                string fisTipKolon = IlkKolonuBul(alisKolonlar, "sFisTipi", "sTip");
+                string odemeTarihKolon = IlkKolonuBul(odemeKolonlar, "dteOdemeTarihi", "dteTarih", "dTarih");
+                string odemeTutarKolon = IlkKolonuBul(odemeKolonlar, "lTutar", "nTutar");
+
+                string veresiyeFiltre = string.IsNullOrWhiteSpace(fisTipKolon)
+                    ? string.Empty
+                    : $" AND a.{fisTipKolon} IN ('KR','VER','VERESIYE','ACIK','ACIKHESAP')";
+
+                StringBuilder sql = new StringBuilder();
+                sql.Append($@"
+SELECT m.nMusteriID,
+       m.sAdi,
+       m.sSoyadi,
+       SUM(x.BorcToplam) AS BorcToplam,
+       SUM(x.TahsilatToplam) AS TahsilatToplam,
+       SUM(x.BorcToplam) - SUM(x.TahsilatToplam) AS NetBakiye
+FROM (
+    SELECT a.nMusteriID,
+           SUM(ISNULL(a.{netKolon}, 0)) AS BorcToplam,
+           CAST(0 AS decimal(18,2)) AS TahsilatToplam
+    FROM tbAlisVeris a
+    WHERE a.nMusteriID IS NOT NULL
+      AND a.{tarihKolon} BETWEEN @baslangic AND @bitis
+      {veresiyeFiltre}
+    GROUP BY a.nMusteriID");
+
+                if (!string.IsNullOrWhiteSpace(odemeTarihKolon) && !string.IsNullOrWhiteSpace(odemeTutarKolon))
+                {
+                    sql.Append($@"
+    UNION ALL
+    SELECT a.nMusteriID,
+           CAST(0 AS decimal(18,2)) AS BorcToplam,
+           SUM(ISNULL(o.{odemeTutarKolon}, 0)) AS TahsilatToplam
+    FROM tbOdeme o
+    INNER JOIN tbAlisVeris a ON a.nAlisverisID = o.nAlisverisID
+    WHERE a.nMusteriID IS NOT NULL
+      AND o.{odemeTarihKolon} BETWEEN @baslangic AND @bitis
+      {veresiyeFiltre}
+    GROUP BY a.nMusteriID");
+                }
+
+                sql.Append(@"
+) x
+INNER JOIN tbMusteri m ON m.nMusteriID = x.nMusteriID
+GROUP BY m.nMusteriID, m.sAdi, m.sSoyadi
+ORDER BY NetBakiye DESC");
+
+                return SorguCalistirDataTable(sql.ToString(), Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
+            }
+        }
+
+        public static DataTable KasaRaporuGetir(DateTime baslangic, DateTime bitis)
+        {
+            using (SqlConnection conn = BaglantiOlustur())
+            {
+                conn.Open();
+                HashSet<string> odemeKolonlar = TabloKolonlariniGetir(conn, null, "tbOdeme");
+                string tarihKolon = IlkKolonuBul(odemeKolonlar, "dteOdemeTarihi", "dteTarih", "dTarih");
+                string tipKolon = IlkKolonuBul(odemeKolonlar, "sOdemeSekli", "sOdemeTipi");
+                string tutarKolon = IlkKolonuBul(odemeKolonlar, "lTutar", "nTutar");
+                if (string.IsNullOrWhiteSpace(tarihKolon) || string.IsNullOrWhiteSpace(tipKolon) || string.IsNullOrWhiteSpace(tutarKolon))
+                {
+                    return new DataTable();
+                }
+
+                string sql = $@"
+SELECT CAST(o.{tarihKolon} AS date) AS Tarih,
+       SUM(CASE WHEN o.{tipKolon} LIKE '%Nakit%' OR o.{tipKolon} = 'N' THEN ISNULL(o.{tutarKolon}, 0) ELSE 0 END) AS NakitToplam,
+       SUM(CASE WHEN o.{tipKolon} LIKE '%Kart%' OR o.{tipKolon} LIKE '%Kredi%' OR o.{tipKolon} = 'KK' THEN ISNULL(o.{tutarKolon}, 0) ELSE 0 END) AS KrediKartiToplam,
+       SUM(ISNULL(o.{tutarKolon}, 0)) AS Toplam,
+       COUNT(1) AS IslemSayisi
+FROM tbOdeme o
+WHERE o.{tarihKolon} BETWEEN @baslangic AND @bitis
+GROUP BY CAST(o.{tarihKolon} AS date)
+ORDER BY CAST(o.{tarihKolon} AS date)";
+
+                return SorguCalistirDataTable(sql, Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
+            }
+        }
+
         public static DataTable UrunAra(string arama)
         {
             using (SqlConnection conn = BaglantiOlustur())
