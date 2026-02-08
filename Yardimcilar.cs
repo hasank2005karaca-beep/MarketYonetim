@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Globalization;
 
 namespace MarketYonetim
@@ -19,8 +18,9 @@ namespace MarketYonetim
                 return YuvarlaKurus(kdvDahilTutar);
             }
 
-            decimal bolen = 1 + (kdvOrani / 100m);
-            return YuvarlaKurus(kdvDahilTutar / bolen);
+            decimal oran = kdvOrani / 100m;
+            decimal matrah = kdvDahilTutar / (1 + oran);
+            return YuvarlaKurus(matrah);
         }
 
         public static decimal KdvTutarHesapla(decimal kdvDahilTutar, decimal kdvOrani)
@@ -29,32 +29,22 @@ namespace MarketYonetim
             return YuvarlaKurus(kdvDahilTutar - matrah);
         }
 
-        public static Dictionary<decimal, KdvDagitimSonuc> KdvDagit(DataTable sepet)
+        public static Dictionary<decimal, (decimal Matrah, decimal Kdv)> KdvDagit(IEnumerable<(decimal Tutar, decimal KdvOrani)> satirlar)
         {
-            var sonuc = new Dictionary<decimal, KdvDagitimSonuc>();
-            if (sepet == null)
-            {
-                return sonuc;
-            }
+            Dictionary<decimal, (decimal Matrah, decimal Kdv)> sonuc = new Dictionary<decimal, (decimal Matrah, decimal Kdv)>();
 
-            foreach (DataRow row in sepet.Rows)
+            foreach (var satir in satirlar)
             {
-                if (!decimal.TryParse(row["nKdvOrani"].ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var oran))
+                decimal matrah = KdvMatrahHesapla(satir.Tutar, satir.KdvOrani);
+                decimal kdv = YuvarlaKurus(satir.Tutar - matrah);
+
+                if (!sonuc.ContainsKey(satir.KdvOrani))
                 {
-                    oran = Ayarlar.VarsayilanKdvOrani;
+                    sonuc[satir.KdvOrani] = (0m, 0m);
                 }
 
-                decimal satirNet = Convert.ToDecimal(row["lSatirToplam"]);
-                decimal matrah = KdvMatrahHesapla(satirNet, oran);
-                decimal kdv = KdvTutarHesapla(satirNet, oran);
-
-                if (!sonuc.ContainsKey(oran))
-                {
-                    sonuc[oran] = new KdvDagitimSonuc();
-                }
-
-                sonuc[oran].Matrah += matrah;
-                sonuc[oran].Kdv += kdv;
+                var mevcut = sonuc[satir.KdvOrani];
+                sonuc[satir.KdvOrani] = (YuvarlaKurus(mevcut.Matrah + matrah), YuvarlaKurus(mevcut.Kdv + kdv));
             }
 
             return sonuc;
@@ -69,11 +59,5 @@ namespace MarketYonetim
         {
             return tarih.ToString("dd.MM.yyyy", CultureInfo.GetCultureInfo("tr-TR"));
         }
-    }
-
-    public class KdvDagitimSonuc
-    {
-        public decimal Matrah { get; set; }
-        public decimal Kdv { get; set; }
     }
 }

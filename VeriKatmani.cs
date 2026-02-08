@@ -2,376 +2,90 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.SqlClient;
-using System.Globalization;
-using System.Linq;
+using System.Text;
 
 namespace MarketYonetim
 {
+    /// <summary>
+    /// MarketYonetim — Merkezi Veri Katmanı
+    ///
+    /// DISCOVERY SONUÇLARI (DB erişimi yoksa '?' olarak bırakıldı):
+    /// | Tablo | PK Sütunu | IDENTITY mi? | NOT NULL zorunlu alanlar | Satış fiş tipi | Örnek kayıt notları |
+    /// |-------|-----------|-------------|------------------------|----------------|---------------------|
+    /// | tbAlisVeris | nAlisverisID | ? | ? | ? | ? |
+    /// | tbStokFisiMaster | nStokFisiID | ? | ? | ? | ? |
+    /// | tbStokFisiDetayi | nIslemID | ? | ? | ? | ? |
+    /// | tbOdeme | ? | ? | ? | ? | ? |
+    /// | tbStok | nStokID | ? | ? | - | ? |
+    /// | tbMusteri | nMusteriID | ? | ? | - | ? |
+    /// </summary>
     public static class VeriKatmani
     {
-        private const string DefaultFiyatTipi = "1";
+        private const string DiscoveryTabloYapisiSql = @"
+SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE, COLUMN_DEFAULT
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME IN (
+    'tbStok','tbStokBarkodu','tbStokFiyati','tbStokSinifi','tbStokTipi',
+    'tbStokFisiMaster','tbStokFisiDetayi',
+    'tbAlisVeris','tbAlisverisSiparis','tbOdeme',
+    'tbMusteri','tbMusteriKarti',
+    'tbNakitKasa','tbDepo','tbCariIslem',
+    'tbFiyatTipi','tbOdemeSekli','tbAVSiraNo','tbAVReyonFisi'
+)
+ORDER BY TABLE_NAME, ORDINAL_POSITION;";
 
-        public static DataTable BarkodIleUrunBul(string barkod)
+        private const string DiscoveryIdentitySql = @"
+SELECT t.name AS TableName, c.name AS ColumnName, c.is_identity
+FROM sys.columns c
+JOIN sys.tables t ON c.object_id = t.object_id
+WHERE t.name IN (
+    'tbStok','tbStokBarkodu','tbStokFiyati','tbStokFisiMaster','tbStokFisiDetayi',
+    'tbAlisVeris','tbAlisverisSiparis','tbOdeme','tbMusteri','tbNakitKasa','tbCariIslem'
+)
+AND c.is_identity = 1;";
+
+        private const string DiscoveryNumaratorSql = @"
+SELECT * FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_NAME LIKE '%SiraNo%' OR TABLE_NAME LIKE '%Numarat%' OR TABLE_NAME LIKE '%Counter%';";
+
+        private const string DiscoveryOrnekSql = @"
+SELECT TOP 3 * FROM tbAlisVeris ORDER BY nAlisverisID DESC;
+SELECT TOP 3 * FROM tbStokFisiMaster ORDER BY nStokFisiID DESC;
+SELECT TOP 3 * FROM tbStokFisiDetayi ORDER BY nIslemID DESC;
+SELECT TOP 3 * FROM tbOdeme ORDER BY 1 DESC;";
+
+        private const string DiscoveryFisTipiSql = @"
+SELECT DISTINCT sFisTipi, nGirisCikis, COUNT(*) AS Adet
+FROM tbStokFisiMaster GROUP BY sFisTipi, nGirisCikis ORDER BY Adet DESC;
+
+SELECT DISTINCT sFisTipi, COUNT(*) AS Adet
+FROM tbAlisVeris GROUP BY sFisTipi ORDER BY Adet DESC;";
+
+        private const string DiscoveryDepoSql = @"
+SELECT sDepo, nFirmaID FROM tbDepo;";
+
+        private const string DiscoveryIndexSql = @"
+SELECT i.name AS IndexName, t.name AS TableName, c.name AS ColumnName
+FROM sys.indexes i
+JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+JOIN sys.tables t ON i.object_id = t.object_id
+WHERE t.name IN ('tbStok','tbStokBarkodu','tbStokFiyati','tbStokFisiDetayi','tbAlisVeris')
+ORDER BY t.name, i.name;";
+
+        public static SqlConnection BaglantiOlustur()
         {
-            const string sql = @"
-                SELECT TOP 1
-                    s.nStokID,
-                    s.sKodu,
-                    s.sAciklama,
-                    s.sBirimCinsi,
-                    b.sBarkod,
-                    ISNULL(f.lFiyat, 0) AS lFiyat,
-                    ISNULL(s.nKdvOrani, @defaultKdv) AS nKdvOrani
-                FROM tbStok s
-                INNER JOIN tbStokBarkodu b ON s.nStokID = b.nStokID
-                LEFT JOIN tbStokFiyati f ON s.nStokID = f.nStokID AND f.sFiyatTipi = @fiyatTipi
-                WHERE b.sBarkod = @barkod";
-
-            return GetDataTable(sql,
-                new SqlParameter("@barkod", barkod),
-                new SqlParameter("@fiyatTipi", DefaultFiyatTipi),
-                new SqlParameter("@defaultKdv", Ayarlar.VarsayilanKdvOrani));
+            return new SqlConnection(Ayarlar.ConnectionString);
         }
 
-        public static DataTable UrunAra(string arama, int sayfa = 0, int sayfaBoyutu = 50)
+        public static DataTable SorguCalistirDataTable(string sql, params SqlParameter[] parametreler)
         {
-            const string sql = @"
-                SELECT
-                    s.nStokID,
-                    s.sKodu,
-                    s.sAciklama,
-                    s.sBirimCinsi,
-                    ISNULL(f.lFiyat, 0) AS lFiyat,
-                    ISNULL(s.nKdvOrani, @defaultKdv) AS nKdvOrani
-                FROM tbStok s
-                LEFT JOIN tbStokFiyati f ON s.nStokID = f.nStokID AND f.sFiyatTipi = @fiyatTipi
-                WHERE s.sAciklama LIKE @arama + '%' OR s.sKodu LIKE @arama + '%'
-                ORDER BY s.sAciklama
-                OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY";
-
-            int skip = sayfa * sayfaBoyutu;
-            return GetDataTable(sql,
-                new SqlParameter("@arama", arama),
-                new SqlParameter("@skip", skip),
-                new SqlParameter("@take", sayfaBoyutu),
-                new SqlParameter("@fiyatTipi", DefaultFiyatTipi),
-                new SqlParameter("@defaultKdv", Ayarlar.VarsayilanKdvOrani));
-        }
-
-        public static decimal StokMiktariGetir(int stokId)
-        {
-            const string sql = @"
-                SELECT
-                    ISNULL(SUM(ISNULL(lGirisMiktar1, 0)), 0) - ISNULL(SUM(ISNULL(lCikisMiktar1, 0)), 0)
-                FROM tbStokFisiDetayi
-                WHERE nStokID = @id";
-
-            using (SqlConnection conn = new SqlConnection(Ayarlar.ConnectionString))
+            using (SqlConnection conn = BaglantiOlustur())
             using (SqlCommand cmd = new SqlCommand(sql, conn))
             {
-                cmd.Parameters.AddWithValue("@id", stokId);
-                conn.Open();
-                object sonuc = cmd.ExecuteScalar();
-                return sonuc == DBNull.Value ? 0m : Convert.ToDecimal(sonuc, CultureInfo.InvariantCulture);
-            }
-        }
-
-        public static int SatisKaydet(DataTable sepet, int musteriId, string odemeTipi,
-            decimal nakit, decimal krediKarti, decimal dipIskontoYuzde)
-        {
-            if (sepet == null || sepet.Rows.Count == 0)
-            {
-                throw new InvalidOperationException("Sepet boş.");
-            }
-
-            return TransactionCalistir((conn, tran) =>
-            {
-                int alisverisId = YeniIdUret(conn, tran, "tbAlisVeris", "nAlisverisID");
-                int stokFisiId = YeniIdUret(conn, tran, "tbStokFisiMaster", "nStokFisiID");
-
-                string fisTipi = odemeTipi == "Veresiye" ? "KR" : "PS";
-
-                var detaylar = SepetDetaylariOlustur(sepet, dipIskontoYuzde);
-
-                decimal brutToplam = detaylar.Sum(x => x.BrutTutar);
-                decimal netToplam = detaylar.Sum(x => x.NetTutar);
-                decimal malIskontoToplam = detaylar.Sum(x => x.SatirIskonto);
-                decimal dipIskontoTutar = detaylar.Sum(x => x.DipIskontoPayi);
-
-                var kdvDagitim = DagitimSlotlariOlustur(detaylar);
-
-                using (SqlCommand cmd = new SqlCommand(@"
-                    INSERT INTO tbAlisVeris (
-                        nAlisverisID, sFisTipi, nGirisCikis, nMusteriID,
-                        dteFaturaTarihi, dteKayitTarihi,
-                        lMalBedeli, lNetTutar,
-                        lKdv1, lKdv2, lKdv3, lKdv4, lKdv5,
-                        lKdvMatrahi1, lKdvMatrahi2, lKdvMatrahi3, lKdvMatrahi4, lKdvMatrahi5,
-                        nKdvOrani1, nKdvOrani2, nKdvOrani3, nKdvOrani4, nKdvOrani5,
-                        lMalIskontoTutari, lDipIskontoTutari,
-                        sKasiyerRumuzu, sMagaza
-                    ) VALUES (
-                        @id, @fisTipi, 2, @musteriId,
-                        @faturaTarihi, @kayitTarihi,
-                        @malBedeli, @netTutar,
-                        @kdv1, @kdv2, @kdv3, @kdv4, @kdv5,
-                        @kdvMatrah1, @kdvMatrah2, @kdvMatrah3, @kdvMatrah4, @kdvMatrah5,
-                        @kdvOrani1, @kdvOrani2, @kdvOrani3, @kdvOrani4, @kdvOrani5,
-                        @malIskonto, @dipIskonto,
-                        @kasiyer, @magaza
-                    )", conn, tran))
+                if (parametreler != null && parametreler.Length > 0)
                 {
-                    cmd.Parameters.AddWithValue("@id", alisverisId);
-                    cmd.Parameters.AddWithValue("@fisTipi", fisTipi);
-                    cmd.Parameters.AddWithValue("@musteriId", musteriId == 0 ? 0 : musteriId);
-                    cmd.Parameters.AddWithValue("@faturaTarihi", DateTime.Now);
-                    cmd.Parameters.AddWithValue("@kayitTarihi", DateTime.Now);
-                    cmd.Parameters.AddWithValue("@malBedeli", brutToplam);
-                    cmd.Parameters.AddWithValue("@netTutar", netToplam);
-                    cmd.Parameters.AddWithValue("@kdv1", kdvDagitim[0].Kdv);
-                    cmd.Parameters.AddWithValue("@kdv2", kdvDagitim[1].Kdv);
-                    cmd.Parameters.AddWithValue("@kdv3", kdvDagitim[2].Kdv);
-                    cmd.Parameters.AddWithValue("@kdv4", kdvDagitim[3].Kdv);
-                    cmd.Parameters.AddWithValue("@kdv5", kdvDagitim[4].Kdv);
-                    cmd.Parameters.AddWithValue("@kdvMatrah1", kdvDagitim[0].Matrah);
-                    cmd.Parameters.AddWithValue("@kdvMatrah2", kdvDagitim[1].Matrah);
-                    cmd.Parameters.AddWithValue("@kdvMatrah3", kdvDagitim[2].Matrah);
-                    cmd.Parameters.AddWithValue("@kdvMatrah4", kdvDagitim[3].Matrah);
-                    cmd.Parameters.AddWithValue("@kdvMatrah5", kdvDagitim[4].Matrah);
-                    cmd.Parameters.AddWithValue("@kdvOrani1", kdvDagitim[0].Oran);
-                    cmd.Parameters.AddWithValue("@kdvOrani2", kdvDagitim[1].Oran);
-                    cmd.Parameters.AddWithValue("@kdvOrani3", kdvDagitim[2].Oran);
-                    cmd.Parameters.AddWithValue("@kdvOrani4", kdvDagitim[3].Oran);
-                    cmd.Parameters.AddWithValue("@kdvOrani5", kdvDagitim[4].Oran);
-                    cmd.Parameters.AddWithValue("@malIskonto", malIskontoToplam);
-                    cmd.Parameters.AddWithValue("@dipIskonto", dipIskontoTutar);
-                    cmd.Parameters.AddWithValue("@kasiyer", Ayarlar.KasiyerRumuzu);
-                    cmd.Parameters.AddWithValue("@magaza", Ayarlar.DepoKodu);
-                    cmd.ExecuteNonQuery();
-                }
-
-                using (SqlCommand cmd = new SqlCommand(@"
-                    INSERT INTO tbStokFisiMaster (
-                        nStokFisiID, sFisTipi, nGirisCikis, sDepo, nFirmaID,
-                        dteFisTarihi, lMalBedeli, lNetTutar,
-                        lKdv1, lKdv2, lKdv3, lKdv4, lKdv5,
-                        lKdvMatrahi1, lKdvMatrahi2, lKdvMatrahi3, lKdvMatrahi4, lKdvMatrahi5,
-                        nKdvOrani1, nKdvOrani2, nKdvOrani3, nKdvOrani4, nKdvOrani5
-                    ) VALUES (
-                        @id, @fisTipi, 2, @depo, 1,
-                        @tarih, @malBedeli, @netTutar,
-                        @kdv1, @kdv2, @kdv3, @kdv4, @kdv5,
-                        @kdvMatrah1, @kdvMatrah2, @kdvMatrah3, @kdvMatrah4, @kdvMatrah5,
-                        @kdvOrani1, @kdvOrani2, @kdvOrani3, @kdvOrani4, @kdvOrani5
-                    )", conn, tran))
-                {
-                    cmd.Parameters.AddWithValue("@id", stokFisiId);
-                    cmd.Parameters.AddWithValue("@fisTipi", fisTipi);
-                    cmd.Parameters.AddWithValue("@depo", Ayarlar.DepoKodu);
-                    cmd.Parameters.AddWithValue("@tarih", DateTime.Now);
-                    cmd.Parameters.AddWithValue("@malBedeli", brutToplam);
-                    cmd.Parameters.AddWithValue("@netTutar", netToplam);
-                    cmd.Parameters.AddWithValue("@kdv1", kdvDagitim[0].Kdv);
-                    cmd.Parameters.AddWithValue("@kdv2", kdvDagitim[1].Kdv);
-                    cmd.Parameters.AddWithValue("@kdv3", kdvDagitim[2].Kdv);
-                    cmd.Parameters.AddWithValue("@kdv4", kdvDagitim[3].Kdv);
-                    cmd.Parameters.AddWithValue("@kdv5", kdvDagitim[4].Kdv);
-                    cmd.Parameters.AddWithValue("@kdvMatrah1", kdvDagitim[0].Matrah);
-                    cmd.Parameters.AddWithValue("@kdvMatrah2", kdvDagitim[1].Matrah);
-                    cmd.Parameters.AddWithValue("@kdvMatrah3", kdvDagitim[2].Matrah);
-                    cmd.Parameters.AddWithValue("@kdvMatrah4", kdvDagitim[3].Matrah);
-                    cmd.Parameters.AddWithValue("@kdvMatrah5", kdvDagitim[4].Matrah);
-                    cmd.Parameters.AddWithValue("@kdvOrani1", kdvDagitim[0].Oran);
-                    cmd.Parameters.AddWithValue("@kdvOrani2", kdvDagitim[1].Oran);
-                    cmd.Parameters.AddWithValue("@kdvOrani3", kdvDagitim[2].Oran);
-                    cmd.Parameters.AddWithValue("@kdvOrani4", kdvDagitim[3].Oran);
-                    cmd.Parameters.AddWithValue("@kdvOrani5", kdvDagitim[4].Oran);
-                    cmd.ExecuteNonQuery();
-                }
-
-                decimal detayToplam = detaylar.Sum(x => x.NetTutar);
-                decimal fark = Yardimcilar.YuvarlaKurus(netToplam - detayToplam);
-                if (Math.Abs(fark) > 0.01m)
-                {
-                    var duzeltilecek = detaylar.OrderByDescending(x => x.NetTutar).First();
-                    duzeltilecek.NetTutar += fark;
-                }
-
-                foreach (var detay in detaylar)
-                {
-                    int islemId = YeniIdUret(conn, tran, "tbStokFisiDetayi", "nIslemID");
-
-                    using (SqlCommand cmd = new SqlCommand(@"
-                        INSERT INTO tbStokFisiDetayi (
-                            nIslemID, nStokFisiID, nStokID, nGirisCikis,
-                            lCikisMiktar1, lCikisFiyat, lBrutTutar, lCikisTutar,
-                            nKdvOrani, lIskontoTutari, nIskontoYuzdesi,
-                            nAlisverisID, sDepo, dteFisTarihi, sKasiyerRumuzu, sFisTipi
-                        ) VALUES (
-                            @islemId, @stokFisiId, @stokId, 2,
-                            @miktar, @birimFiyat, @brutTutar, @cikisTutar,
-                            @kdvOrani, @iskontoTutari, @iskontoYuzde,
-                            @alisverisId, @depo, @tarih, @kasiyer, @fisTipi
-                        )", conn, tran))
-                    {
-                        cmd.Parameters.AddWithValue("@islemId", islemId);
-                        cmd.Parameters.AddWithValue("@stokFisiId", stokFisiId);
-                        cmd.Parameters.AddWithValue("@stokId", detay.StokId);
-                        cmd.Parameters.AddWithValue("@miktar", detay.Miktar);
-                        cmd.Parameters.AddWithValue("@birimFiyat", detay.BirimFiyat);
-                        cmd.Parameters.AddWithValue("@brutTutar", detay.BrutTutar);
-                        cmd.Parameters.AddWithValue("@cikisTutar", detay.NetTutar);
-                        cmd.Parameters.AddWithValue("@kdvOrani", detay.KdvOrani);
-                        cmd.Parameters.AddWithValue("@iskontoTutari", detay.SatirIskonto);
-                        cmd.Parameters.AddWithValue("@iskontoYuzde", detay.IskontoYuzde);
-                        cmd.Parameters.AddWithValue("@alisverisId", alisverisId);
-                        cmd.Parameters.AddWithValue("@depo", Ayarlar.DepoKodu);
-                        cmd.Parameters.AddWithValue("@tarih", DateTime.Now);
-                        cmd.Parameters.AddWithValue("@kasiyer", Ayarlar.KasiyerRumuzu);
-                        cmd.Parameters.AddWithValue("@fisTipi", fisTipi);
-                        cmd.ExecuteNonQuery();
-                    }
-                }
-
-                if (nakit > 0)
-                {
-                    KaydetOdeme(conn, tran, alisverisId, "N", nakit);
-                    KaydetNakitKasa(conn, tran, alisverisId, nakit);
-                }
-
-                if (krediKarti > 0)
-                {
-                    KaydetOdeme(conn, tran, alisverisId, "KK", krediKarti);
-                }
-
-                return alisverisId;
-            });
-        }
-
-        public static DataTable GunSatisOzeti()
-        {
-            const string sql = @"
-                SELECT
-                    ISNULL(SUM(lNetTutar), 0) AS ToplamTutar,
-                    ISNULL(COUNT(*), 0) AS SatisAdedi
-                FROM tbAlisVeris
-                WHERE nGirisCikis = 2 AND dteFaturaTarihi >= @tarih";
-
-            return GetDataTable(sql, new SqlParameter("@tarih", DateTime.Today));
-        }
-
-        private static List<SepetDetay> SepetDetaylariOlustur(DataTable sepet, decimal dipIskontoYuzde)
-        {
-            var detaylar = new List<SepetDetay>();
-            decimal toplamNet = 0m;
-
-            foreach (DataRow row in sepet.Rows)
-            {
-                decimal miktar = Convert.ToDecimal(row["lMiktar"]);
-                decimal birimFiyat = Convert.ToDecimal(row["lBirimFiyat"]);
-                decimal iskontoYuzde = Convert.ToDecimal(row["nIskontoYuzde"]);
-                decimal kdvOrani = Convert.ToDecimal(row["nKdvOrani"]);
-
-                decimal brut = Yardimcilar.YuvarlaKurus(miktar * birimFiyat);
-                decimal satirIskonto = Yardimcilar.YuvarlaKurus(brut * (iskontoYuzde / 100m));
-                decimal net = Yardimcilar.YuvarlaKurus(brut - satirIskonto);
-
-                var detay = new SepetDetay
-                {
-                    StokId = Convert.ToInt32(row["nStokID"]),
-                    Miktar = miktar,
-                    BirimFiyat = birimFiyat,
-                    IskontoYuzde = iskontoYuzde,
-                    KdvOrani = kdvOrani,
-                    BrutTutar = brut,
-                    SatirIskonto = satirIskonto,
-                    NetTutar = net
-                };
-
-                detaylar.Add(detay);
-                toplamNet += net;
-            }
-
-            if (toplamNet > 0 && dipIskontoYuzde > 0)
-            {
-                decimal dipIskontoTutar = Yardimcilar.YuvarlaKurus(toplamNet * (dipIskontoYuzde / 100m));
-                foreach (var detay in detaylar)
-                {
-                    decimal pay = detay.NetTutar / toplamNet;
-                    detay.DipIskontoPayi = Yardimcilar.YuvarlaKurus(dipIskontoTutar * pay);
-                    detay.NetTutar = Yardimcilar.YuvarlaKurus(detay.NetTutar - detay.DipIskontoPayi);
-                }
-            }
-
-            return detaylar;
-        }
-
-        private static List<KdvSlot> DagitimSlotlariOlustur(List<SepetDetay> detaylar)
-        {
-            var dagitim = new Dictionary<decimal, KdvDagitimSonuc>();
-            foreach (var detay in detaylar)
-            {
-                decimal matrah = Yardimcilar.KdvMatrahHesapla(detay.NetTutar, detay.KdvOrani);
-                decimal kdv = Yardimcilar.KdvTutarHesapla(detay.NetTutar, detay.KdvOrani);
-
-                if (!dagitim.ContainsKey(detay.KdvOrani))
-                {
-                    dagitim[detay.KdvOrani] = new KdvDagitimSonuc();
-                }
-
-                dagitim[detay.KdvOrani].Matrah += matrah;
-                dagitim[detay.KdvOrani].Kdv += kdv;
-            }
-
-            var slotlar = dagitim
-                .OrderBy(x => x.Key)
-                .Take(5)
-                .Select(x => new KdvSlot { Oran = x.Key, Matrah = x.Value.Matrah, Kdv = x.Value.Kdv })
-                .ToList();
-
-            while (slotlar.Count < 5)
-            {
-                slotlar.Add(new KdvSlot());
-            }
-
-            return slotlar;
-        }
-
-        private static void KaydetOdeme(SqlConnection conn, SqlTransaction tran, int alisverisId, string odemeTipi, decimal tutar)
-        {
-            using (SqlCommand cmd = new SqlCommand(@"
-                INSERT INTO tbOdeme (nAlisverisID, sOdemeSekli, lTutar, dteKayitTarihi)
-                VALUES (@alisverisId, @odemeTipi, @tutar, @tarih)", conn, tran))
-            {
-                cmd.Parameters.AddWithValue("@alisverisId", alisverisId);
-                cmd.Parameters.AddWithValue("@odemeTipi", odemeTipi);
-                cmd.Parameters.AddWithValue("@tutar", tutar);
-                cmd.Parameters.AddWithValue("@tarih", DateTime.Now);
-                cmd.ExecuteNonQuery();
-            }
-        }
-
-        private static void KaydetNakitKasa(SqlConnection conn, SqlTransaction tran, int alisverisId, decimal tutar)
-        {
-            using (SqlCommand cmd = new SqlCommand(@"
-                INSERT INTO tbNakitKasa (nHesapID, nFirmaID, dteIslemTarihi, sHangiUygulama, lTutar, nAlisverisID)
-                VALUES (1, 1, @tarih, 'POS', @tutar, @alisverisId)", conn, tran))
-            {
-                cmd.Parameters.AddWithValue("@tarih", DateTime.Now);
-                cmd.Parameters.AddWithValue("@tutar", tutar);
-                cmd.Parameters.AddWithValue("@alisverisId", alisverisId);
-                cmd.ExecuteNonQuery();
-            }
-        }
-
-        private static DataTable GetDataTable(string sql, params SqlParameter[] parameters)
-        {
-            using (SqlConnection conn = new SqlConnection(Ayarlar.ConnectionString))
-            using (SqlCommand cmd = new SqlCommand(sql, conn))
-            {
-                if (parameters != null && parameters.Length > 0)
-                {
-                    cmd.Parameters.AddRange(parameters);
+                    cmd.Parameters.AddRange(parametreler);
                 }
 
                 using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
@@ -383,29 +97,46 @@ namespace MarketYonetim
             }
         }
 
-        private static int YeniIdUret(SqlConnection conn, SqlTransaction tran, string tablo, string alan)
+        public static object SorguCalistirScalar(string sql, params SqlParameter[] parametreler)
         {
-            string sql = $@"
-                SELECT ISNULL(MAX({alan}), 0) + 1
-                FROM {tablo} WITH (UPDLOCK, HOLDLOCK)";
-
-            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
+            using (SqlConnection conn = BaglantiOlustur())
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
             {
-                object sonuc = cmd.ExecuteScalar();
-                return Convert.ToInt32(sonuc, CultureInfo.InvariantCulture);
+                if (parametreler != null && parametreler.Length > 0)
+                {
+                    cmd.Parameters.AddRange(parametreler);
+                }
+
+                conn.Open();
+                return cmd.ExecuteScalar();
             }
         }
 
-        private static int TransactionCalistir(Func<SqlConnection, SqlTransaction, int> action)
+        public static int SorguCalistirNonQuery(string sql, params SqlParameter[] parametreler)
         {
-            using (SqlConnection conn = new SqlConnection(Ayarlar.ConnectionString))
+            using (SqlConnection conn = BaglantiOlustur())
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            {
+                if (parametreler != null && parametreler.Length > 0)
+                {
+                    cmd.Parameters.AddRange(parametreler);
+                }
+
+                conn.Open();
+                return cmd.ExecuteNonQuery();
+            }
+        }
+
+        public static T TransactionCalistir<T>(Func<SqlConnection, SqlTransaction, T> islem)
+        {
+            using (SqlConnection conn = BaglantiOlustur())
             {
                 conn.Open();
                 using (SqlTransaction tran = conn.BeginTransaction(IsolationLevel.Serializable))
                 {
                     try
                     {
-                        int sonuc = action(conn, tran);
+                        T sonuc = islem(conn, tran);
                         tran.Commit();
                         return sonuc;
                     }
@@ -418,24 +149,123 @@ namespace MarketYonetim
             }
         }
 
-        private class SepetDetay
+        public static void TransactionCalistir(Action<SqlConnection, SqlTransaction> islem)
         {
-            public int StokId { get; set; }
-            public decimal Miktar { get; set; }
-            public decimal BirimFiyat { get; set; }
-            public decimal IskontoYuzde { get; set; }
-            public decimal KdvOrani { get; set; }
-            public decimal BrutTutar { get; set; }
-            public decimal SatirIskonto { get; set; }
-            public decimal DipIskontoPayi { get; set; }
-            public decimal NetTutar { get; set; }
+            TransactionCalistir((conn, tran) =>
+            {
+                islem(conn, tran);
+                return 0;
+            });
         }
 
-        private class KdvSlot
+        public static int YeniIdUret(SqlConnection conn, SqlTransaction tran, string tablo, string pkKolon)
         {
-            public decimal Oran { get; set; }
-            public decimal Matrah { get; set; }
-            public decimal Kdv { get; set; }
+            string sql = $"SELECT ISNULL(MAX({pkKolon}), 0) + 1 FROM {tablo} WITH (UPDLOCK, HOLDLOCK)";
+            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
+            {
+                object sonuc = cmd.ExecuteScalar();
+                return Convert.ToInt32(sonuc);
+            }
+        }
+
+        public static DataTable DiscoveryTabloYapisi()
+        {
+            return SorguCalistirDataTable(DiscoveryTabloYapisiSql);
+        }
+
+        public static DataTable DiscoveryIdentityKontrol()
+        {
+            return SorguCalistirDataTable(DiscoveryIdentitySql);
+        }
+
+        public static DataTable DiscoveryNumaratorKontrol()
+        {
+            return SorguCalistirDataTable(DiscoveryNumaratorSql);
+        }
+
+        public static DataSet DiscoveryOrnekKayitlar()
+        {
+            using (SqlConnection conn = BaglantiOlustur())
+            using (SqlCommand cmd = new SqlCommand(DiscoveryOrnekSql, conn))
+            using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+            {
+                DataSet ds = new DataSet();
+                adapter.Fill(ds);
+                return ds;
+            }
+        }
+
+        public static DataSet DiscoveryFisTipleri()
+        {
+            using (SqlConnection conn = BaglantiOlustur())
+            using (SqlCommand cmd = new SqlCommand(DiscoveryFisTipiSql, conn))
+            using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+            {
+                DataSet ds = new DataSet();
+                adapter.Fill(ds);
+                return ds;
+            }
+        }
+
+        public static DataTable DiscoveryDepolar()
+        {
+            return SorguCalistirDataTable(DiscoveryDepoSql);
+        }
+
+        public static DataTable DiscoveryIndexler()
+        {
+            return SorguCalistirDataTable(DiscoveryIndexSql);
+        }
+
+        public static void DiscoveryLogla()
+        {
+            try
+            {
+                DataTable tabloYapisi = DiscoveryTabloYapisi();
+                DataTable identity = DiscoveryIdentityKontrol();
+                DataTable numarator = DiscoveryNumaratorKontrol();
+                DataSet ornekler = DiscoveryOrnekKayitlar();
+                DataSet fisTipleri = DiscoveryFisTipleri();
+                DataTable depolar = DiscoveryDepolar();
+                DataTable indexler = DiscoveryIndexler();
+
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("=== DISCOVERY TABLO YAPISI ===");
+                sb.AppendLine($"Satır: {tabloYapisi.Rows.Count}");
+                sb.AppendLine("=== DISCOVERY IDENTITY ===");
+                sb.AppendLine($"Satır: {identity.Rows.Count}");
+                sb.AppendLine("=== DISCOVERY NUMARATOR ===");
+                sb.AppendLine($"Satır: {numarator.Rows.Count}");
+                sb.AppendLine("=== DISCOVERY ÖRNEK KAYITLAR ===");
+                sb.AppendLine($"Set: {ornekler.Tables.Count}");
+                sb.AppendLine("=== DISCOVERY FİŞ TİPLERİ ===");
+                sb.AppendLine($"Set: {fisTipleri.Tables.Count}");
+                sb.AppendLine("=== DISCOVERY DEPOLAR ===");
+                sb.AppendLine($"Satır: {depolar.Rows.Count}");
+                sb.AppendLine("=== DISCOVERY INDEXLER ===");
+                sb.AppendLine($"Satır: {indexler.Rows.Count}");
+
+                Console.WriteLine(sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Discovery çalıştırılamadı: {ex.Message}");
+            }
+        }
+
+        public static SqlParameter Parametre(string ad, object deger)
+        {
+            return new SqlParameter(ad, deger ?? DBNull.Value);
+        }
+
+        public static List<SqlParameter> ParametreListe(params SqlParameter[] parametreler)
+        {
+            List<SqlParameter> liste = new List<SqlParameter>();
+            if (parametreler != null)
+            {
+                liste.AddRange(parametreler);
+            }
+            return liste;
         }
     }
 }
