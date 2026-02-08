@@ -2,467 +2,143 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Data.SqlClient;
+using System.Text;
 
 namespace MarketYonetim
 {
+    /// <summary>
+    /// MarketYonetim — Merkezi Veri Katmanı
+    ///
+    /// DISCOVERY SONUÇLARI (DB erişimi yoksa '?' olarak bırakıldı):
+    /// | Tablo | PK Sütunu | IDENTITY mi? | NOT NULL zorunlu alanlar | Satış fiş tipi | Örnek kayıt notları |
+    /// |-------|-----------|-------------|------------------------|----------------|---------------------|
+    /// | tbAlisVeris | nAlisverisID | ? | ? | ? | ? |
+    /// | tbStokFisiMaster | nStokFisiID | ? | ? | ? | ? |
+    /// | tbStokFisiDetayi | nIslemID | ? | ? | ? | ? |
+    /// | tbOdeme | ? | ? | ? | ? | ? |
+    /// | tbStok | nStokID | ? | ? | - | ? |
+    /// | tbMusteri | nMusteriID | ? | ? | - | ? |
+    /// </summary>
     public static class VeriKatmani
     {
-        private static SqlConnection BaglantiOlustur()
+        private const string DiscoveryTabloYapisiSql = @"
+SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE, COLUMN_DEFAULT
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME IN (
+    'tbStok','tbStokBarkodu','tbStokFiyati','tbStokSinifi','tbStokTipi',
+    'tbStokFisiMaster','tbStokFisiDetayi',
+    'tbAlisVeris','tbAlisverisSiparis','tbOdeme',
+    'tbMusteri','tbMusteriKarti',
+    'tbNakitKasa','tbDepo','tbCariIslem',
+    'tbFiyatTipi','tbOdemeSekli','tbAVSiraNo','tbAVReyonFisi'
+)
+ORDER BY TABLE_NAME, ORDINAL_POSITION;";
+
+        private const string DiscoveryIdentitySql = @"
+SELECT t.name AS TableName, c.name AS ColumnName, c.is_identity
+FROM sys.columns c
+JOIN sys.tables t ON c.object_id = t.object_id
+WHERE t.name IN (
+    'tbStok','tbStokBarkodu','tbStokFiyati','tbStokFisiMaster','tbStokFisiDetayi',
+    'tbAlisVeris','tbAlisverisSiparis','tbOdeme','tbMusteri','tbNakitKasa','tbCariIslem'
+)
+AND c.is_identity = 1;";
+
+        private const string DiscoveryNumaratorSql = @"
+SELECT * FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_NAME LIKE '%SiraNo%' OR TABLE_NAME LIKE '%Numarat%' OR TABLE_NAME LIKE '%Counter%';";
+
+        private const string DiscoveryOrnekSql = @"
+SELECT TOP 3 * FROM tbAlisVeris ORDER BY nAlisverisID DESC;
+SELECT TOP 3 * FROM tbStokFisiMaster ORDER BY nStokFisiID DESC;
+SELECT TOP 3 * FROM tbStokFisiDetayi ORDER BY nIslemID DESC;
+SELECT TOP 3 * FROM tbOdeme ORDER BY 1 DESC;";
+
+        private const string DiscoveryFisTipiSql = @"
+SELECT DISTINCT sFisTipi, nGirisCikis, COUNT(*) AS Adet
+FROM tbStokFisiMaster GROUP BY sFisTipi, nGirisCikis ORDER BY Adet DESC;
+
+SELECT DISTINCT sFisTipi, COUNT(*) AS Adet
+FROM tbAlisVeris GROUP BY sFisTipi ORDER BY Adet DESC;";
+
+        private const string DiscoveryDepoSql = @"
+SELECT sDepo, nFirmaID FROM tbDepo;";
+
+        private const string DiscoveryIndexSql = @"
+SELECT i.name AS IndexName, t.name AS TableName, c.name AS ColumnName
+FROM sys.indexes i
+JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+JOIN sys.tables t ON i.object_id = t.object_id
+WHERE t.name IN ('tbStok','tbStokBarkodu','tbStokFiyati','tbStokFisiDetayi','tbAlisVeris')
+ORDER BY t.name, i.name;";
+
+        public static SqlConnection BaglantiOlustur()
         {
             return new SqlConnection(Ayarlar.ConnectionString);
         }
 
-        private static bool TabloVarMi(SqlConnection conn, SqlTransaction tran, string tablo)
-        {
-            using (SqlCommand cmd = new SqlCommand("SELECT COUNT(1) FROM sys.tables WHERE name = @tablo", conn, tran))
-            {
-                cmd.Parameters.AddWithValue("@tablo", tablo);
-                return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
-            }
-        }
-
-        private static bool KolonIdentityMi(SqlConnection conn, SqlTransaction tran, string tablo, string kolon)
-        {
-            using (SqlCommand cmd = new SqlCommand(@"
-                SELECT c.is_identity
-                FROM sys.columns c
-                INNER JOIN sys.tables t ON c.object_id = t.object_id
-                WHERE t.name = @tablo AND c.name = @kolon", conn, tran))
-            {
-                cmd.Parameters.AddWithValue("@tablo", tablo);
-                cmd.Parameters.AddWithValue("@kolon", kolon);
-                object sonuc = cmd.ExecuteScalar();
-                return sonuc != null && sonuc != DBNull.Value && Convert.ToBoolean(sonuc);
-            }
-        }
-
-        private static DataTable DataTableGetir(string sql, List<SqlParameter> parametreler)
+        public static DataTable SorguCalistirDataTable(string sql, params SqlParameter[] parametreler)
         {
             using (SqlConnection conn = BaglantiOlustur())
             using (SqlCommand cmd = new SqlCommand(sql, conn))
-            using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
             {
-                if (parametreler != null)
+                if (parametreler != null && parametreler.Length > 0)
                 {
-                    cmd.Parameters.AddRange(parametreler.ToArray());
+                    cmd.Parameters.AddRange(parametreler);
                 }
-                DataTable dt = new DataTable();
-                adapter.Fill(dt);
-                return dt;
+
+                using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                {
+                    DataTable dt = new DataTable();
+                    adapter.Fill(dt);
+                    return dt;
+                }
             }
         }
 
-        private static int ExecuteNonQuery(SqlConnection conn, SqlTransaction tran, string sql, List<SqlParameter> parametreler)
+        public static object SorguCalistirScalar(string sql, params SqlParameter[] parametreler)
         {
-            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
+            using (SqlConnection conn = BaglantiOlustur())
+            using (SqlCommand cmd = new SqlCommand(sql, conn))
             {
-                if (parametreler != null)
+                if (parametreler != null && parametreler.Length > 0)
                 {
-                    cmd.Parameters.AddRange(parametreler.ToArray());
+                    cmd.Parameters.AddRange(parametreler);
                 }
-                return cmd.ExecuteNonQuery();
-            }
-        }
 
-        private static object ExecuteScalar(SqlConnection conn, SqlTransaction tran, string sql, List<SqlParameter> parametreler)
-        {
-            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
-            {
-                if (parametreler != null)
-                {
-                    cmd.Parameters.AddRange(parametreler.ToArray());
-                }
+                conn.Open();
                 return cmd.ExecuteScalar();
             }
         }
 
-        public static DataTable Sinif1leriGetir()
+        public static int SorguCalistirNonQuery(string sql, params SqlParameter[] parametreler)
         {
-            const string sql = @"
-                SELECT DISTINCT sSinifKodu1
-                FROM tbStokSinifi
-                WHERE sSinifKodu1 IS NOT NULL AND sSinifKodu1 <> ''
-                ORDER BY sSinifKodu1";
-            return DataTableGetir(sql, null);
-        }
-
-        public static DataTable Sinif2leriGetir(string sinif1)
-        {
-            const string sql = @"
-                SELECT DISTINCT sSinifKodu2
-                FROM tbStokSinifi
-                WHERE sSinifKodu1 = @sinif1 AND sSinifKodu2 IS NOT NULL AND sSinifKodu2 <> ''
-                ORDER BY sSinifKodu2";
-            return DataTableGetir(sql, new List<SqlParameter> { new SqlParameter("@sinif1", sinif1) });
-        }
-
-        public static bool StokKoduVarMi(string kodu, int? stokId)
-        {
-            const string sql = "SELECT TOP 1 nStokID FROM tbStok WHERE sKodu = @kodu AND (@stokId IS NULL OR nStokID <> @stokId)";
-            List<SqlParameter> parametreler = new List<SqlParameter>
-            {
-                new SqlParameter("@kodu", kodu),
-                new SqlParameter("@stokId", (object)stokId ?? DBNull.Value)
-            };
-            DataTable dt = DataTableGetir(sql, parametreler);
-            return dt.Rows.Count > 0;
-        }
-
-        public static bool BarkodVarMi(string barkod, int? stokId)
-        {
-            const string sql = "SELECT TOP 1 nStokID FROM tbStokBarkodu WHERE sBarkod = @barkod AND (@stokId IS NULL OR nStokID <> @stokId)";
-            List<SqlParameter> parametreler = new List<SqlParameter>
-            {
-                new SqlParameter("@barkod", barkod),
-                new SqlParameter("@stokId", (object)stokId ?? DBNull.Value)
-            };
-            DataTable dt = DataTableGetir(sql, parametreler);
-            return dt.Rows.Count > 0;
-        }
-
-        public static int UrunSayisiGetir(
-            string arama,
-            string barkod,
-            string sinif1,
-            string sinif2,
-            string stokDurum,
-            decimal? minFiyat,
-            decimal? maxFiyat)
-        {
-            List<SqlParameter> parametreler = new List<SqlParameter>();
-            string sql = @"
-                SELECT COUNT(1)
-                FROM tbStok s
-                LEFT JOIN tbStokSinifi si ON s.nStokID = si.nStokID
-                WHERE 1=1";
-
-            if (!string.IsNullOrWhiteSpace(arama) && arama.Length >= 2)
-            {
-                sql += " AND (s.sAciklama LIKE @arama + '%' OR s.sKodu LIKE @arama + '%')";
-                parametreler.Add(new SqlParameter("@arama", arama.Trim()));
-            }
-
-            if (!string.IsNullOrWhiteSpace(barkod))
-            {
-                sql += " AND EXISTS (SELECT 1 FROM tbStokBarkodu b WHERE b.nStokID = s.nStokID AND b.sBarkod = @barkod)";
-                parametreler.Add(new SqlParameter("@barkod", barkod.Trim()));
-            }
-
-            if (!string.IsNullOrWhiteSpace(sinif1) && sinif1 != "Hepsi")
-            {
-                sql += " AND si.sSinifKodu1 = @sinif1";
-                parametreler.Add(new SqlParameter("@sinif1", sinif1));
-            }
-
-            if (!string.IsNullOrWhiteSpace(sinif2) && sinif2 != "Hepsi")
-            {
-                sql += " AND si.sSinifKodu2 = @sinif2";
-                parametreler.Add(new SqlParameter("@sinif2", sinif2));
-            }
-
-            if (minFiyat.HasValue || maxFiyat.HasValue)
-            {
-                sql += @"
-                    AND EXISTS (
-                        SELECT 1
-                        FROM tbStokFiyati f
-                        WHERE f.nStokID = s.nStokID
-                          AND f.sFiyatTipi = @fiyatTipi
-                          AND (@minFiyat IS NULL OR f.lFiyat >= @minFiyat)
-                          AND (@maxFiyat IS NULL OR f.lFiyat <= @maxFiyat)
-                    )";
-                parametreler.Add(new SqlParameter("@fiyatTipi", Ayarlar.VarsayilanFiyatTipi));
-                parametreler.Add(new SqlParameter("@minFiyat", (object)minFiyat ?? DBNull.Value));
-                parametreler.Add(new SqlParameter("@maxFiyat", (object)maxFiyat ?? DBNull.Value));
-            }
-
-            if (!string.IsNullOrWhiteSpace(stokDurum) && stokDurum != "hepsi")
-            {
-                sql += @"
-                    AND EXISTS (
-                        SELECT 1
-                        FROM (
-                            SELECT SUM(ISNULL(fd.lMiktar, 0)) AS StokMiktari
-                            FROM tbStokFisiDetayi fd
-                            WHERE fd.nStokID = s.nStokID
-                        ) st
-                        WHERE (@stokDurum = 'var' AND st.StokMiktari > 0)
-                           OR (@stokDurum = 'yok' AND st.StokMiktari <= 0)
-                           OR (@stokDurum = 'az' AND st.StokMiktari > 0 AND st.StokMiktari < @kritik)
-                    )";
-                parametreler.Add(new SqlParameter("@stokDurum", stokDurum));
-                parametreler.Add(new SqlParameter("@kritik", Ayarlar.KritikStokEsigi));
-            }
-
             using (SqlConnection conn = BaglantiOlustur())
             using (SqlCommand cmd = new SqlCommand(sql, conn))
             {
-                if (parametreler.Count > 0)
+                if (parametreler != null && parametreler.Length > 0)
                 {
-                    cmd.Parameters.AddRange(parametreler.ToArray());
+                    cmd.Parameters.AddRange(parametreler);
                 }
+
                 conn.Open();
-                return Convert.ToInt32(cmd.ExecuteScalar());
+                return cmd.ExecuteNonQuery();
             }
         }
 
-        public static DataTable UrunleriGetir(
-            string arama,
-            string barkod,
-            string sinif1,
-            string sinif2,
-            string stokDurum,
-            decimal? minFiyat,
-            decimal? maxFiyat,
-            int sayfa,
-            int sayfaBoyutu = 50)
-        {
-            List<SqlParameter> parametreler = new List<SqlParameter>();
-            string sql = @"
-                SELECT
-                    s.nStokID,
-                    s.sKodu,
-                    s.sAciklama,
-                    s.sBirimCinsi1 AS sBirimCinsi,
-                    ISNULL(b.sBarkod, '') AS Barkod,
-                    ISNULL(f.lFiyat, 0) AS Fiyat,
-                    ISNULL(st.StokMiktari, 0) AS StokMiktari,
-                    ISNULL(si.sSinifKodu1, '') AS Kategori1,
-                    ISNULL(si.sSinifKodu2, '') AS Kategori2
-                FROM tbStok s
-                LEFT JOIN tbStokSinifi si ON s.nStokID = si.nStokID
-                OUTER APPLY (
-                    SELECT TOP 1 sb.sBarkod
-                    FROM tbStokBarkodu sb
-                    WHERE sb.nStokID = s.nStokID
-                    ORDER BY sb.sBarkod
-                ) b
-                OUTER APPLY (
-                    SELECT TOP 1 sf.lFiyat
-                    FROM tbStokFiyati sf
-                    WHERE sf.nStokID = s.nStokID AND sf.sFiyatTipi = @fiyatTipi
-                ) f
-                OUTER APPLY (
-                    SELECT SUM(ISNULL(fd.lMiktar, 0)) AS StokMiktari
-                    FROM tbStokFisiDetayi fd
-                    WHERE fd.nStokID = s.nStokID
-                ) st
-                WHERE 1=1";
-
-            parametreler.Add(new SqlParameter("@fiyatTipi", Ayarlar.VarsayilanFiyatTipi));
-
-            if (!string.IsNullOrWhiteSpace(arama) && arama.Length >= 2)
-            {
-                sql += " AND (s.sAciklama LIKE @arama + '%' OR s.sKodu LIKE @arama + '%')";
-                parametreler.Add(new SqlParameter("@arama", arama.Trim()));
-            }
-
-            if (!string.IsNullOrWhiteSpace(barkod))
-            {
-                sql += " AND EXISTS (SELECT 1 FROM tbStokBarkodu sb WHERE sb.nStokID = s.nStokID AND sb.sBarkod = @barkod)";
-                parametreler.Add(new SqlParameter("@barkod", barkod.Trim()));
-            }
-
-            if (!string.IsNullOrWhiteSpace(sinif1) && sinif1 != "Hepsi")
-            {
-                sql += " AND si.sSinifKodu1 = @sinif1";
-                parametreler.Add(new SqlParameter("@sinif1", sinif1));
-            }
-
-            if (!string.IsNullOrWhiteSpace(sinif2) && sinif2 != "Hepsi")
-            {
-                sql += " AND si.sSinifKodu2 = @sinif2";
-                parametreler.Add(new SqlParameter("@sinif2", sinif2));
-            }
-
-            if (minFiyat.HasValue)
-            {
-                sql += " AND EXISTS (SELECT 1 FROM tbStokFiyati sf WHERE sf.nStokID = s.nStokID AND sf.sFiyatTipi = @fiyatTipi AND sf.lFiyat >= @minFiyat)";
-                parametreler.Add(new SqlParameter("@minFiyat", minFiyat.Value));
-            }
-
-            if (maxFiyat.HasValue)
-            {
-                sql += " AND EXISTS (SELECT 1 FROM tbStokFiyati sf WHERE sf.nStokID = s.nStokID AND sf.sFiyatTipi = @fiyatTipi AND sf.lFiyat <= @maxFiyat)";
-                parametreler.Add(new SqlParameter("@maxFiyat", maxFiyat.Value));
-            }
-
-            if (!string.IsNullOrWhiteSpace(stokDurum) && stokDurum != "hepsi")
-            {
-                sql += @"
-                    AND (
-                        (@stokDurum = 'var' AND ISNULL(st.StokMiktari, 0) > 0)
-                        OR (@stokDurum = 'yok' AND ISNULL(st.StokMiktari, 0) <= 0)
-                        OR (@stokDurum = 'az' AND ISNULL(st.StokMiktari, 0) > 0 AND ISNULL(st.StokMiktari, 0) < @kritik)
-                    )";
-                parametreler.Add(new SqlParameter("@stokDurum", stokDurum));
-                parametreler.Add(new SqlParameter("@kritik", Ayarlar.KritikStokEsigi));
-            }
-
-            sql += " ORDER BY s.nStokID OFFSET @offset ROWS FETCH NEXT @fetch ROWS ONLY";
-            parametreler.Add(new SqlParameter("@offset", (sayfa - 1) * sayfaBoyutu));
-            parametreler.Add(new SqlParameter("@fetch", sayfaBoyutu));
-
-            return DataTableGetir(sql, parametreler);
-        }
-
-        public static DataSet UrunDetayGetir(int stokId)
-        {
-            DataSet ds = new DataSet();
-            using (SqlConnection conn = BaglantiOlustur())
-            {
-                conn.Open();
-
-                using (SqlCommand cmd = new SqlCommand(@"
-                    SELECT TOP 1 s.nStokID, s.sKodu, s.sAciklama, s.sKisaAdi, s.sBirimCinsi1,
-                                 ISNULL(si.sSinifKodu1, '') AS sSinifKodu1,
-                                 ISNULL(si.sSinifKodu2, '') AS sSinifKodu2
-                    FROM tbStok s
-                    LEFT JOIN tbStokSinifi si ON s.nStokID = si.nStokID
-                    WHERE s.nStokID = @stokId", conn))
-                {
-                    cmd.Parameters.AddWithValue("@stokId", stokId);
-                    using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
-                    {
-                        adapter.Fill(ds, "Urun");
-                    }
-                }
-
-                using (SqlCommand cmd = new SqlCommand(@"
-                    SELECT sBarkod
-                    FROM tbStokBarkodu
-                    WHERE nStokID = @stokId
-                    ORDER BY sBarkod", conn))
-                {
-                    cmd.Parameters.AddWithValue("@stokId", stokId);
-                    using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
-                    {
-                        adapter.Fill(ds, "Barkodlar");
-                    }
-                }
-
-                using (SqlCommand cmd = new SqlCommand(@"
-                    SELECT sFiyatTipi, lFiyat
-                    FROM tbStokFiyati
-                    WHERE nStokID = @stokId
-                    ORDER BY sFiyatTipi", conn))
-                {
-                    cmd.Parameters.AddWithValue("@stokId", stokId);
-                    using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
-                    {
-                        adapter.Fill(ds, "Fiyatlar");
-                    }
-                }
-
-                using (SqlCommand cmd = new SqlCommand(@"
-                    SELECT SUM(ISNULL(fd.lMiktar, 0)) AS StokMiktari
-                    FROM tbStokFisiDetayi fd
-                    WHERE fd.nStokID = @stokId", conn))
-                {
-                    cmd.Parameters.AddWithValue("@stokId", stokId);
-                    using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
-                    {
-                        adapter.Fill(ds, "Stok");
-                    }
-                }
-            }
-
-            return ds;
-        }
-
-        public static int UrunEkle(
-            string kodu,
-            string aciklama,
-            string kisaAdi,
-            string birimCinsi,
-            string sinif1,
-            string sinif2,
-            List<string> barkodlar,
-            Dictionary<string, decimal> fiyatlarByTip)
+        public static T TransactionCalistir<T>(Func<SqlConnection, SqlTransaction, T> islem)
         {
             using (SqlConnection conn = BaglantiOlustur())
             {
                 conn.Open();
-                using (SqlTransaction tran = conn.BeginTransaction())
+                using (SqlTransaction tran = conn.BeginTransaction(IsolationLevel.Serializable))
                 {
                     try
                     {
-                        bool identity = KolonIdentityMi(conn, tran, "tbStok", "nStokID");
-                        int stokId;
-                        if (identity)
-                        {
-                            string insertSql = @"
-                                INSERT INTO tbStok (sKodu, sAciklama, sKisaAdi, sBirimCinsi1)
-                                VALUES (@kodu, @aciklama, @kisaAdi, @birimCinsi);
-                                SELECT CAST(SCOPE_IDENTITY() AS INT);";
-                            object sonuc = ExecuteScalar(conn, tran, insertSql, new List<SqlParameter>
-                            {
-                                new SqlParameter("@kodu", kodu),
-                                new SqlParameter("@aciklama", aciklama),
-                                new SqlParameter("@kisaAdi", (object)kisaAdi ?? DBNull.Value),
-                                new SqlParameter("@birimCinsi", birimCinsi)
-                            });
-                            stokId = Convert.ToInt32(sonuc);
-                        }
-                        else
-                        {
-                            stokId = YeniIdUret(conn, tran, "tbStok", "nStokID");
-                            string insertSql = @"
-                                INSERT INTO tbStok (nStokID, sKodu, sAciklama, sKisaAdi, sBirimCinsi1)
-                                VALUES (@stokId, @kodu, @aciklama, @kisaAdi, @birimCinsi);";
-                            ExecuteNonQuery(conn, tran, insertSql, new List<SqlParameter>
-                            {
-                                new SqlParameter("@stokId", stokId),
-                                new SqlParameter("@kodu", kodu),
-                                new SqlParameter("@aciklama", aciklama),
-                                new SqlParameter("@kisaAdi", (object)kisaAdi ?? DBNull.Value),
-                                new SqlParameter("@birimCinsi", birimCinsi)
-                            });
-                        }
-
-                        if (TabloVarMi(conn, tran, "tbStokSinifi"))
-                        {
-                            ExecuteNonQuery(conn, tran, @"
-                                INSERT INTO tbStokSinifi (nStokID, sSinifKodu1, sSinifKodu2)
-                                VALUES (@stokId, @sinif1, @sinif2)", new List<SqlParameter>
-                            {
-                                new SqlParameter("@stokId", stokId),
-                                new SqlParameter("@sinif1", (object)sinif1 ?? DBNull.Value),
-                                new SqlParameter("@sinif2", (object)sinif2 ?? DBNull.Value)
-                            });
-                        }
-
-                        if (barkodlar != null)
-                        {
-                            foreach (string barkod in barkodlar)
-                            {
-                                ExecuteNonQuery(conn, tran, @"
-                                    INSERT INTO tbStokBarkodu (nStokID, sBarkod)
-                                    VALUES (@stokId, @barkod)", new List<SqlParameter>
-                                {
-                                    new SqlParameter("@stokId", stokId),
-                                    new SqlParameter("@barkod", barkod)
-                                });
-                            }
-                        }
-
-                        if (fiyatlarByTip != null)
-                        {
-                            foreach (KeyValuePair<string, decimal> fiyat in fiyatlarByTip)
-                            {
-                                ExecuteNonQuery(conn, tran, @"
-                                    INSERT INTO tbStokFiyati (nStokID, sFiyatTipi, lFiyat)
-                                    VALUES (@stokId, @fiyatTipi, @fiyat)", new List<SqlParameter>
-                                {
-                                    new SqlParameter("@stokId", stokId),
-                                    new SqlParameter("@fiyatTipi", fiyat.Key),
-                                    new SqlParameter("@fiyat", fiyat.Value)
-                                });
-                            }
-                        }
-
+                        T sonuc = islem(conn, tran);
                         tran.Commit();
-                        return stokId;
+                        return sonuc;
                     }
                     catch
                     {
@@ -473,304 +149,123 @@ namespace MarketYonetim
             }
         }
 
-        public static void UrunGuncelle(
-            int stokId,
-            string kodu,
-            string aciklama,
-            string kisaAdi,
-            string birimCinsi,
-            string sinif1,
-            string sinif2,
-            List<string> barkodlar,
-            Dictionary<string, decimal> fiyatlarByTip)
+        public static void TransactionCalistir(Action<SqlConnection, SqlTransaction> islem)
         {
-            using (SqlConnection conn = BaglantiOlustur())
+            TransactionCalistir((conn, tran) =>
             {
-                conn.Open();
-                using (SqlTransaction tran = conn.BeginTransaction())
-                {
-                    try
-                    {
-                        ExecuteNonQuery(conn, tran, @"
-                            UPDATE tbStok
-                            SET sKodu = @kodu,
-                                sAciklama = @aciklama,
-                                sKisaAdi = @kisaAdi,
-                                sBirimCinsi1 = @birimCinsi
-                            WHERE nStokID = @stokId", new List<SqlParameter>
-                        {
-                            new SqlParameter("@kodu", kodu),
-                            new SqlParameter("@aciklama", aciklama),
-                            new SqlParameter("@kisaAdi", (object)kisaAdi ?? DBNull.Value),
-                            new SqlParameter("@birimCinsi", birimCinsi),
-                            new SqlParameter("@stokId", stokId)
-                        });
+                islem(conn, tran);
+                return 0;
+            });
+        }
 
-                        if (TabloVarMi(conn, tran, "tbStokSinifi"))
-                        {
-                            object sinifVar = ExecuteScalar(conn, tran,
-                                "SELECT COUNT(1) FROM tbStokSinifi WHERE nStokID = @stokId",
-                                new List<SqlParameter> { new SqlParameter("@stokId", stokId) });
-
-                            if (Convert.ToInt32(sinifVar) > 0)
-                            {
-                                ExecuteNonQuery(conn, tran, @"
-                                    UPDATE tbStokSinifi
-                                    SET sSinifKodu1 = @sinif1, sSinifKodu2 = @sinif2
-                                    WHERE nStokID = @stokId", new List<SqlParameter>
-                                {
-                                    new SqlParameter("@sinif1", (object)sinif1 ?? DBNull.Value),
-                                    new SqlParameter("@sinif2", (object)sinif2 ?? DBNull.Value),
-                                    new SqlParameter("@stokId", stokId)
-                                });
-                            }
-                            else
-                            {
-                                ExecuteNonQuery(conn, tran, @"
-                                    INSERT INTO tbStokSinifi (nStokID, sSinifKodu1, sSinifKodu2)
-                                    VALUES (@stokId, @sinif1, @sinif2)", new List<SqlParameter>
-                                {
-                                    new SqlParameter("@stokId", stokId),
-                                    new SqlParameter("@sinif1", (object)sinif1 ?? DBNull.Value),
-                                    new SqlParameter("@sinif2", (object)sinif2 ?? DBNull.Value)
-                                });
-                            }
-                        }
-
-                        ExecuteNonQuery(conn, tran, "DELETE FROM tbStokBarkodu WHERE nStokID = @stokId",
-                            new List<SqlParameter> { new SqlParameter("@stokId", stokId) });
-
-                        if (barkodlar != null)
-                        {
-                            foreach (string barkod in barkodlar)
-                            {
-                                ExecuteNonQuery(conn, tran, @"
-                                    INSERT INTO tbStokBarkodu (nStokID, sBarkod)
-                                    VALUES (@stokId, @barkod)", new List<SqlParameter>
-                                {
-                                    new SqlParameter("@stokId", stokId),
-                                    new SqlParameter("@barkod", barkod)
-                                });
-                            }
-                        }
-
-                        if (fiyatlarByTip != null)
-                        {
-                            foreach (KeyValuePair<string, decimal> fiyat in fiyatlarByTip)
-                            {
-                                object fiyatVar = ExecuteScalar(conn, tran,
-                                    "SELECT COUNT(1) FROM tbStokFiyati WHERE nStokID = @stokId AND sFiyatTipi = @fiyatTipi",
-                                    new List<SqlParameter>
-                                    {
-                                        new SqlParameter("@stokId", stokId),
-                                        new SqlParameter("@fiyatTipi", fiyat.Key)
-                                    });
-
-                                if (Convert.ToInt32(fiyatVar) > 0)
-                                {
-                                    ExecuteNonQuery(conn, tran, @"
-                                        UPDATE tbStokFiyati
-                                        SET lFiyat = @fiyat
-                                        WHERE nStokID = @stokId AND sFiyatTipi = @fiyatTipi", new List<SqlParameter>
-                                    {
-                                        new SqlParameter("@stokId", stokId),
-                                        new SqlParameter("@fiyatTipi", fiyat.Key),
-                                        new SqlParameter("@fiyat", fiyat.Value)
-                                    });
-                                }
-                                else
-                                {
-                                    ExecuteNonQuery(conn, tran, @"
-                                        INSERT INTO tbStokFiyati (nStokID, sFiyatTipi, lFiyat)
-                                        VALUES (@stokId, @fiyatTipi, @fiyat)", new List<SqlParameter>
-                                    {
-                                        new SqlParameter("@stokId", stokId),
-                                        new SqlParameter("@fiyatTipi", fiyat.Key),
-                                        new SqlParameter("@fiyat", fiyat.Value)
-                                    });
-                                }
-                            }
-                        }
-
-                        tran.Commit();
-                    }
-                    catch
-                    {
-                        tran.Rollback();
-                        throw;
-                    }
-                }
+        public static int YeniIdUret(SqlConnection conn, SqlTransaction tran, string tablo, string pkKolon)
+        {
+            string sql = $"SELECT ISNULL(MAX({pkKolon}), 0) + 1 FROM {tablo} WITH (UPDLOCK, HOLDLOCK)";
+            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
+            {
+                object sonuc = cmd.ExecuteScalar();
+                return Convert.ToInt32(sonuc);
             }
         }
 
-        public static void UrunSil(int stokId, bool satisGecmisiVarsaEngelle = true)
+        public static DataTable DiscoveryTabloYapisi()
+        {
+            return SorguCalistirDataTable(DiscoveryTabloYapisiSql);
+        }
+
+        public static DataTable DiscoveryIdentityKontrol()
+        {
+            return SorguCalistirDataTable(DiscoveryIdentitySql);
+        }
+
+        public static DataTable DiscoveryNumaratorKontrol()
+        {
+            return SorguCalistirDataTable(DiscoveryNumaratorSql);
+        }
+
+        public static DataSet DiscoveryOrnekKayitlar()
         {
             using (SqlConnection conn = BaglantiOlustur())
+            using (SqlCommand cmd = new SqlCommand(DiscoveryOrnekSql, conn))
+            using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
             {
-                conn.Open();
-                using (SqlTransaction tran = conn.BeginTransaction())
-                {
-                    try
-                    {
-                        object satisVar = ExecuteScalar(conn, tran, @"
-                            SELECT TOP 1 1
-                            FROM tbStokFisiDetayi
-                            WHERE nStokID = @stokId
-                            UNION ALL
-                            SELECT TOP 1 1
-                            FROM tbAlisVeris
-                            WHERE nStokID = @stokId", new List<SqlParameter> { new SqlParameter("@stokId", stokId) });
-
-                        if (satisVar != null && satisGecmisiVarsaEngelle)
-                        {
-                            throw new InvalidOperationException("Bu ürüne ait satış/alış geçmişi bulunduğu için silme engellendi.");
-                        }
-
-                        ExecuteNonQuery(conn, tran, "DELETE FROM tbStokBarkodu WHERE nStokID = @stokId",
-                            new List<SqlParameter> { new SqlParameter("@stokId", stokId) });
-                        ExecuteNonQuery(conn, tran, "DELETE FROM tbStokFiyati WHERE nStokID = @stokId",
-                            new List<SqlParameter> { new SqlParameter("@stokId", stokId) });
-
-                        if (TabloVarMi(conn, tran, "tbStokSinifi"))
-                        {
-                            ExecuteNonQuery(conn, tran, "DELETE FROM tbStokSinifi WHERE nStokID = @stokId",
-                                new List<SqlParameter> { new SqlParameter("@stokId", stokId) });
-                        }
-
-                        ExecuteNonQuery(conn, tran, "DELETE FROM tbStok WHERE nStokID = @stokId",
-                            new List<SqlParameter> { new SqlParameter("@stokId", stokId) });
-
-                        tran.Commit();
-                    }
-                    catch
-                    {
-                        tran.Rollback();
-                        throw;
-                    }
-                }
+                DataSet ds = new DataSet();
+                adapter.Fill(ds);
+                return ds;
             }
         }
 
-        public static DataTable BarkodlariGetir(int stokId)
-        {
-            const string sql = "SELECT sBarkod FROM tbStokBarkodu WHERE nStokID = @stokId ORDER BY sBarkod";
-            return DataTableGetir(sql, new List<SqlParameter> { new SqlParameter("@stokId", stokId) });
-        }
-
-        public static void BarkodEkle(int stokId, string barkod)
+        public static DataSet DiscoveryFisTipleri()
         {
             using (SqlConnection conn = BaglantiOlustur())
+            using (SqlCommand cmd = new SqlCommand(DiscoveryFisTipiSql, conn))
+            using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
             {
-                conn.Open();
-                using (SqlTransaction tran = conn.BeginTransaction())
-                {
-                    try
-                    {
-                        ExecuteNonQuery(conn, tran, @"
-                            INSERT INTO tbStokBarkodu (nStokID, sBarkod)
-                            VALUES (@stokId, @barkod)", new List<SqlParameter>
-                        {
-                            new SqlParameter("@stokId", stokId),
-                            new SqlParameter("@barkod", barkod)
-                        });
-                        tran.Commit();
-                    }
-                    catch
-                    {
-                        tran.Rollback();
-                        throw;
-                    }
-                }
+                DataSet ds = new DataSet();
+                adapter.Fill(ds);
+                return ds;
             }
         }
 
-        public static void BarkodSil(int stokId, string barkod)
+        public static DataTable DiscoveryDepolar()
         {
-            using (SqlConnection conn = BaglantiOlustur())
+            return SorguCalistirDataTable(DiscoveryDepoSql);
+        }
+
+        public static DataTable DiscoveryIndexler()
+        {
+            return SorguCalistirDataTable(DiscoveryIndexSql);
+        }
+
+        public static void DiscoveryLogla()
+        {
+            try
             {
-                conn.Open();
-                using (SqlTransaction tran = conn.BeginTransaction())
-                {
-                    try
-                    {
-                        ExecuteNonQuery(conn, tran, "DELETE FROM tbStokBarkodu WHERE nStokID = @stokId AND sBarkod = @barkod",
-                            new List<SqlParameter>
-                            {
-                                new SqlParameter("@stokId", stokId),
-                                new SqlParameter("@barkod", barkod)
-                            });
-                        tran.Commit();
-                    }
-                    catch
-                    {
-                        tran.Rollback();
-                        throw;
-                    }
-                }
+                DataTable tabloYapisi = DiscoveryTabloYapisi();
+                DataTable identity = DiscoveryIdentityKontrol();
+                DataTable numarator = DiscoveryNumaratorKontrol();
+                DataSet ornekler = DiscoveryOrnekKayitlar();
+                DataSet fisTipleri = DiscoveryFisTipleri();
+                DataTable depolar = DiscoveryDepolar();
+                DataTable indexler = DiscoveryIndexler();
+
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("=== DISCOVERY TABLO YAPISI ===");
+                sb.AppendLine($"Satır: {tabloYapisi.Rows.Count}");
+                sb.AppendLine("=== DISCOVERY IDENTITY ===");
+                sb.AppendLine($"Satır: {identity.Rows.Count}");
+                sb.AppendLine("=== DISCOVERY NUMARATOR ===");
+                sb.AppendLine($"Satır: {numarator.Rows.Count}");
+                sb.AppendLine("=== DISCOVERY ÖRNEK KAYITLAR ===");
+                sb.AppendLine($"Set: {ornekler.Tables.Count}");
+                sb.AppendLine("=== DISCOVERY FİŞ TİPLERİ ===");
+                sb.AppendLine($"Set: {fisTipleri.Tables.Count}");
+                sb.AppendLine("=== DISCOVERY DEPOLAR ===");
+                sb.AppendLine($"Satır: {depolar.Rows.Count}");
+                sb.AppendLine("=== DISCOVERY INDEXLER ===");
+                sb.AppendLine($"Satır: {indexler.Rows.Count}");
+
+                Console.WriteLine(sb.ToString());
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Discovery çalıştırılamadı: {ex.Message}");
             }
         }
 
-        public static DataTable FiyatlariGetir(int stokId)
+        public static SqlParameter Parametre(string ad, object deger)
         {
-            const string sql = "SELECT sFiyatTipi, lFiyat FROM tbStokFiyati WHERE nStokID = @stokId ORDER BY sFiyatTipi";
-            return DataTableGetir(sql, new List<SqlParameter> { new SqlParameter("@stokId", stokId) });
+            return new SqlParameter(ad, deger ?? DBNull.Value);
         }
 
-        public static void FiyatGuncelle(int stokId, string fiyatTipi, decimal yeniFiyat)
+        public static List<SqlParameter> ParametreListe(params SqlParameter[] parametreler)
         {
-            using (SqlConnection conn = BaglantiOlustur())
+            List<SqlParameter> liste = new List<SqlParameter>();
+            if (parametreler != null)
             {
-                conn.Open();
-                using (SqlTransaction tran = conn.BeginTransaction())
-                {
-                    try
-                    {
-                        object fiyatVar = ExecuteScalar(conn, tran,
-                            "SELECT COUNT(1) FROM tbStokFiyati WHERE nStokID = @stokId AND sFiyatTipi = @fiyatTipi",
-                            new List<SqlParameter>
-                            {
-                                new SqlParameter("@stokId", stokId),
-                                new SqlParameter("@fiyatTipi", fiyatTipi)
-                            });
-
-                        if (Convert.ToInt32(fiyatVar) > 0)
-                        {
-                            ExecuteNonQuery(conn, tran, @"
-                                UPDATE tbStokFiyati
-                                SET lFiyat = @fiyat
-                                WHERE nStokID = @stokId AND sFiyatTipi = @fiyatTipi", new List<SqlParameter>
-                            {
-                                new SqlParameter("@stokId", stokId),
-                                new SqlParameter("@fiyatTipi", fiyatTipi),
-                                new SqlParameter("@fiyat", yeniFiyat)
-                            });
-                        }
-                        else
-                        {
-                            ExecuteNonQuery(conn, tran, @"
-                                INSERT INTO tbStokFiyati (nStokID, sFiyatTipi, lFiyat)
-                                VALUES (@stokId, @fiyatTipi, @fiyat)", new List<SqlParameter>
-                            {
-                                new SqlParameter("@stokId", stokId),
-                                new SqlParameter("@fiyatTipi", fiyatTipi),
-                                new SqlParameter("@fiyat", yeniFiyat)
-                            });
-                        }
-                        tran.Commit();
-                    }
-                    catch
-                    {
-                        tran.Rollback();
-                        throw;
-                    }
-                }
+                liste.AddRange(parametreler);
             }
-        }
-
-        public static int YeniIdUret(SqlConnection conn, SqlTransaction tran, string tablo, string kolon)
-        {
-            object sonuc = ExecuteScalar(conn, tran, $"SELECT ISNULL(MAX({kolon}), 0) + 1 FROM {tablo}", null);
-            return Convert.ToInt32(sonuc);
+            return liste;
         }
     }
 }
