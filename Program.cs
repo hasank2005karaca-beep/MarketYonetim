@@ -49,7 +49,10 @@ namespace MarketYonetim
                 }
             }
 
-            VeriKatmani.DiscoveryLogla();
+            if (!DiscoveryKilit.Calistir())
+            {
+                return;
+            }
             
             // Ana formu başlat
             Application.Run(new FormSatis());
