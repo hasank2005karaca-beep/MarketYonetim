@@ -46,6 +46,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Ayarlar.cs" />
+    <Compile Include="DiscoveryKilit.cs" />
     <Compile Include="FormAyarlar.cs" />
     <Compile Include="FormBarkodYonetimi.cs" />
     <Compile Include="FormFiyatDuzenle.cs" />
