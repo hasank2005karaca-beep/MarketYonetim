@@ -52,6 +52,7 @@
     <Compile Include="FormFiyatDuzenle.cs" />
     <Compile Include="FormFiyatYonetimi.cs" />
     <!-- S7-FIX: Eksik form dosyaları -->
+    <Compile Include="KdvDagitimSonuc.cs" />
     <Compile Include="FormMusteriYonetimi.cs" />
     <Compile Include="FormMusteriSec.cs" />
     <Compile Include="FormOdeme.cs" />
