@@ -45,11 +45,13 @@
     <Compile Include="FormAyarlar.cs" />
     <Compile Include="FormBarkodYonetimi.cs" />
     <Compile Include="FormFiyatDuzenle.cs" />
+    <Compile Include="FormFiyatYonetimi.cs" />
     <Compile Include="FormMusteriSec.cs" />
     <Compile Include="FormOdeme.cs" />
     <Compile Include="FormRaporlar.cs" />
     <Compile Include="FormSatis.cs" />
     <Compile Include="FormStokYonetimi.cs" />
+    <Compile Include="FormTopluIslemler.cs" />
     <Compile Include="FormUrunDuzenle.cs" />
     <Compile Include="FormUrunYonetimi.cs" />
     <Compile Include="Program.cs" />

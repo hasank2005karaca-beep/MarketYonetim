@@ -839,15 +839,6 @@ SELECT CAST(SCOPE_IDENTITY() AS int);";
             );
         }
 
-        public static void BarkodEkle(int stokId, string barkod)
-        {
-            SorguCalistirNonQuery(
-                "INSERT INTO tbStokBarkodu (nStokID, sBarkod) VALUES (@stokId, @barkod)",
-                Parametre("@stokId", stokId),
-                Parametre("@barkod", barkod)
-            );
-        }
-
         public static void BarkodSil(int stokId, string barkod)
         {
             SorguCalistirNonQuery(
@@ -1296,7 +1287,54 @@ WHERE b.sBarkod = @barkod";
         public static DataTable FiyatlariGetir(int stokId)
         {
             return SorguCalistirDataTable(
-                "SELECT sFiyatTipi, lFiyat FROM tbStokFiyati WHERE nStokID = @stokId",
+                "SELECT sFiyatTipi, lFiyat FROM tbStokFiyati WHERE nStokID = @stokId ORDER BY sFiyatTipi",
+                Parametre("@stokId", stokId)
+            );
+        }
+
+        public static DataTable FiyatTipleriniGetir()
+        {
+            using (SqlConnection conn = BaglantiOlustur())
+            {
+                conn.Open();
+                using (SqlTransaction tran = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        if (TabloVarMi(conn, tran, "tbFiyatTipi"))
+                        {
+                            using (SqlCommand cmd = new SqlCommand("SELECT sFiyatTipi, sAciklama FROM tbFiyatTipi ORDER BY sFiyatTipi", conn, tran))
+                            using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                            {
+                                DataTable dt = new DataTable();
+                                adapter.Fill(dt);
+                                tran.Commit();
+                                return dt;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        tran.Rollback();
+                        throw;
+                    }
+
+                    using (SqlCommand cmd = new SqlCommand("SELECT DISTINCT TOP 50 sFiyatTipi, sFiyatTipi AS sAciklama FROM tbStokFiyati ORDER BY sFiyatTipi", conn, tran))
+                    using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                    {
+                        DataTable dt = new DataTable();
+                        adapter.Fill(dt);
+                        tran.Commit();
+                        return dt;
+                    }
+                }
+            }
+        }
+
+        public static DataTable UrunFiyatlariniGetir(int stokId)
+        {
+            return SorguCalistirDataTable(
+                "SELECT sFiyatTipi, lFiyat FROM tbStokFiyati WHERE nStokID = @stokId ORDER BY sFiyatTipi",
                 Parametre("@stokId", stokId)
             );
         }
@@ -1305,14 +1343,13 @@ WHERE b.sBarkod = @barkod";
         {
             TransactionCalistir((conn, tran) =>
             {
-                using (SqlCommand cmd = new SqlCommand("DELETE FROM tbStokFiyati WHERE nStokID = @stokId AND sFiyatTipi = @tip", conn, tran))
-                {
-                    cmd.Parameters.AddWithValue("@stokId", stokId);
-                    cmd.Parameters.AddWithValue("@tip", fiyatTipi);
-                    cmd.ExecuteNonQuery();
-                }
-
-                using (SqlCommand cmd = new SqlCommand("INSERT INTO tbStokFiyati (nStokID, sFiyatTipi, lFiyat) VALUES (@stokId, @tip, @fiyat)", conn, tran))
+                using (SqlCommand cmd = new SqlCommand(@"
+UPDATE tbStokFiyati SET lFiyat = @fiyat
+WHERE nStokID = @stokId AND sFiyatTipi = @tip;
+IF @@ROWCOUNT = 0
+BEGIN
+    INSERT INTO tbStokFiyati (nStokID, sFiyatTipi, lFiyat) VALUES (@stokId, @tip, @fiyat);
+END", conn, tran))
                 {
                     cmd.Parameters.AddWithValue("@stokId", stokId);
                     cmd.Parameters.AddWithValue("@tip", fiyatTipi);
@@ -1320,6 +1357,348 @@ WHERE b.sBarkod = @barkod";
                     cmd.ExecuteNonQuery();
                 }
             });
+        }
+
+        public static DataTable UrunleriFiyatYonetimiIcinGetir(string arama, string fiyatTipi, int sayfa, int sayfaBoyutu = 50)
+        {
+            int offset = Math.Max(0, sayfa - 1) * sayfaBoyutu;
+            string sql = @"
+SELECT s.nStokID,
+       s.sKodu,
+       s.sAciklama,
+       b.sBarkod,
+       s.sBirimCinsi1 AS sBirimCinsi,
+       f.lFiyat,
+       stk.StokMiktari,
+       s.sSinifKodu1 AS Kategori1,
+       s.sSinifKodu2 AS Kategori2
+FROM tbStok s
+OUTER APPLY (SELECT TOP 1 sBarkod FROM tbStokBarkodu b WHERE b.nStokID = s.nStokID ORDER BY b.sBarkod) b
+OUTER APPLY (SELECT TOP 1 lFiyat FROM tbStokFiyati f WHERE f.nStokID = s.nStokID AND f.sFiyatTipi = @fiyatTipi) f
+OUTER APPLY (
+    SELECT SUM(ISNULL(lGirisMiktar1,0)) - SUM(ISNULL(lCikisMiktar1,0)) AS StokMiktari
+    FROM tbStokFisiDetayi d WHERE d.nStokID = s.nStokID
+) stk
+WHERE (@arama IS NULL OR @arama = '' OR s.sAciklama LIKE @arama + '%' OR s.sKodu LIKE @arama + '%')
+ORDER BY s.nStokID
+OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
+
+            return SorguCalistirDataTable(
+                sql,
+                Parametre("@arama", string.IsNullOrWhiteSpace(arama) ? null : arama),
+                Parametre("@fiyatTipi", string.IsNullOrWhiteSpace(fiyatTipi) ? Ayarlar.VarsayilanFiyatTipi : fiyatTipi),
+                Parametre("@offset", offset),
+                Parametre("@sayfaBoyutu", sayfaBoyutu)
+            );
+        }
+
+        public static DataTable UrunIdleriGetirFiltreli(string arama, string sinif1, string sinif2, decimal? minFiyat, decimal? maxFiyat, string stokDurum, int sayfa, int sayfaBoyutu = 200)
+        {
+            return UrunIdleriGetirFiltreli(arama, sinif1, sinif2, minFiyat, maxFiyat, stokDurum, Ayarlar.VarsayilanFiyatTipi, sayfa, sayfaBoyutu);
+        }
+
+        public static DataTable UrunIdleriGetirFiltreli(string arama, string sinif1, string sinif2, decimal? minFiyat, decimal? maxFiyat, string stokDurum, string fiyatTipi, int sayfa, int sayfaBoyutu = 200)
+        {
+            int offset = Math.Max(0, sayfa - 1) * sayfaBoyutu;
+            StringBuilder sql = new StringBuilder(@"
+SELECT s.nStokID,
+       s.sKodu,
+       s.sAciklama,
+       b.sBarkod,
+       f.lFiyat,
+       stk.StokMiktari,
+       s.sSinifKodu1 AS Kategori1,
+       s.sSinifKodu2 AS Kategori2
+FROM tbStok s
+OUTER APPLY (SELECT TOP 1 sBarkod FROM tbStokBarkodu b WHERE b.nStokID = s.nStokID ORDER BY b.sBarkod) b
+OUTER APPLY (SELECT TOP 1 lFiyat FROM tbStokFiyati f WHERE f.nStokID = s.nStokID AND f.sFiyatTipi = @fiyatTipi) f
+OUTER APPLY (
+    SELECT SUM(ISNULL(lGirisMiktar1,0)) - SUM(ISNULL(lCikisMiktar1,0)) AS StokMiktari
+    FROM tbStokFisiDetayi d WHERE d.nStokID = s.nStokID
+) stk
+WHERE 1=1");
+
+            List<SqlParameter> parametreler = new List<SqlParameter>
+            {
+                Parametre("@fiyatTipi", string.IsNullOrWhiteSpace(fiyatTipi) ? Ayarlar.VarsayilanFiyatTipi : fiyatTipi)
+            };
+
+            if (!string.IsNullOrWhiteSpace(arama))
+            {
+                sql.Append(" AND (s.sAciklama LIKE @arama + '%' OR s.sKodu LIKE @arama + '%')");
+                parametreler.Add(Parametre("@arama", arama));
+            }
+
+            if (!string.IsNullOrWhiteSpace(sinif1) && sinif1 != "Hepsi")
+            {
+                sql.Append(" AND s.sSinifKodu1 = @sinif1");
+                parametreler.Add(Parametre("@sinif1", sinif1));
+            }
+
+            if (!string.IsNullOrWhiteSpace(sinif2) && sinif2 != "Hepsi")
+            {
+                sql.Append(" AND s.sSinifKodu2 = @sinif2");
+                parametreler.Add(Parametre("@sinif2", sinif2));
+            }
+
+            if (minFiyat.HasValue)
+            {
+                sql.Append(" AND f.lFiyat >= @minFiyat");
+                parametreler.Add(Parametre("@minFiyat", minFiyat));
+            }
+
+            if (maxFiyat.HasValue)
+            {
+                sql.Append(" AND f.lFiyat <= @maxFiyat");
+                parametreler.Add(Parametre("@maxFiyat", maxFiyat));
+            }
+
+            if (!string.IsNullOrWhiteSpace(stokDurum))
+            {
+                string durum = stokDurum.ToLowerInvariant();
+                if (durum == "var")
+                {
+                    sql.Append(" AND stk.StokMiktari > 0");
+                }
+                else if (durum == "yok")
+                {
+                    sql.Append(" AND stk.StokMiktari <= 0");
+                }
+            }
+
+            sql.Append(" ORDER BY s.nStokID OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;");
+            parametreler.Add(Parametre("@offset", offset));
+            parametreler.Add(Parametre("@sayfaBoyutu", sayfaBoyutu));
+
+            return SorguCalistirDataTable(sql.ToString(), parametreler.ToArray());
+        }
+
+        public static int TopluFiyatGuncelleYuzde(List<int> stokIdler, string fiyatTipi, decimal yuzde, string yuvarlamaModu)
+        {
+            if (stokIdler == null || stokIdler.Count == 0)
+            {
+                return 0;
+            }
+
+            const int batchBoyutu = 300;
+            return TransactionCalistir((conn, tran) =>
+            {
+                int toplam = 0;
+                for (int i = 0; i < stokIdler.Count; i += batchBoyutu)
+                {
+                    List<int> batch = stokIdler.Skip(i).Take(batchBoyutu).ToList();
+                    foreach (int stokId in batch)
+                    {
+                        decimal mevcutFiyat = 0m;
+                        using (SqlCommand fiyatCmd = new SqlCommand("SELECT lFiyat FROM tbStokFiyati WHERE nStokID = @stokId AND sFiyatTipi = @tip", conn, tran))
+                        {
+                            fiyatCmd.Parameters.AddWithValue("@stokId", stokId);
+                            fiyatCmd.Parameters.AddWithValue("@tip", fiyatTipi);
+                            object sonuc = fiyatCmd.ExecuteScalar();
+                            if (sonuc != null && sonuc != DBNull.Value)
+                            {
+                                mevcutFiyat = Convert.ToDecimal(sonuc);
+                            }
+                        }
+
+                        decimal yeniFiyat = mevcutFiyat * (1 + (yuzde / 100m));
+                        yeniFiyat = YuvarlaTopluFiyat(yeniFiyat, yuvarlamaModu);
+                        if (yeniFiyat < 0)
+                        {
+                            yeniFiyat = 0m;
+                        }
+
+                        using (SqlCommand cmd = new SqlCommand(@"
+UPDATE tbStokFiyati SET lFiyat = @fiyat
+WHERE nStokID = @stokId AND sFiyatTipi = @tip;
+IF @@ROWCOUNT = 0
+BEGIN
+    INSERT INTO tbStokFiyati (nStokID, sFiyatTipi, lFiyat) VALUES (@stokId, @tip, @fiyat);
+END", conn, tran))
+                        {
+                            cmd.Parameters.AddWithValue("@stokId", stokId);
+                            cmd.Parameters.AddWithValue("@tip", fiyatTipi);
+                            cmd.Parameters.AddWithValue("@fiyat", yeniFiyat);
+                            cmd.ExecuteNonQuery();
+                        }
+
+                        toplam++;
+                    }
+                }
+
+                return toplam;
+            });
+        }
+
+        public static int TopluKategoriAta(List<int> stokIdler, string sinif1, string sinif2)
+        {
+            if (stokIdler == null || stokIdler.Count == 0)
+            {
+                return 0;
+            }
+
+            return TransactionCalistir((conn, tran) =>
+            {
+                if (!TabloVarMi(conn, tran, "tbStokSinifi"))
+                {
+                    throw new InvalidOperationException("Bu kurulumda kategori tablosu yok.");
+                }
+
+                const int batchBoyutu = 300;
+                int toplam = 0;
+                for (int i = 0; i < stokIdler.Count; i += batchBoyutu)
+                {
+                    List<int> batch = stokIdler.Skip(i).Take(batchBoyutu).ToList();
+                    foreach (int stokId in batch)
+                    {
+                        using (SqlCommand cmd = new SqlCommand(@"
+UPDATE tbStokSinifi SET sSinifKodu1 = @sinif1, sSinifKodu2 = @sinif2
+WHERE nStokID = @stokId;
+IF @@ROWCOUNT = 0
+BEGIN
+    INSERT INTO tbStokSinifi (nStokID, sSinifKodu1, sSinifKodu2) VALUES (@stokId, @sinif1, @sinif2);
+END", conn, tran))
+                        {
+                            cmd.Parameters.AddWithValue("@stokId", stokId);
+                            cmd.Parameters.AddWithValue("@sinif1", string.IsNullOrWhiteSpace(sinif1) ? (object)DBNull.Value : sinif1);
+                            cmd.Parameters.AddWithValue("@sinif2", string.IsNullOrWhiteSpace(sinif2) ? (object)DBNull.Value : sinif2);
+                            cmd.ExecuteNonQuery();
+                        }
+                        toplam++;
+                    }
+                }
+
+                return toplam;
+            });
+        }
+
+        public static DataTable BarkodsuzUrunleriGetir(int sayfa, int sayfaBoyutu = 100)
+        {
+            int offset = Math.Max(0, sayfa - 1) * sayfaBoyutu;
+            string sql = @"
+SELECT s.nStokID,
+       s.sKodu,
+       s.sAciklama,
+       s.sBirimCinsi1 AS sBirimCinsi,
+       s.sSinifKodu1 AS Kategori1,
+       s.sSinifKodu2 AS Kategori2
+FROM tbStok s
+LEFT JOIN tbStokBarkodu b ON b.nStokID = s.nStokID
+WHERE b.nStokID IS NULL
+ORDER BY s.nStokID
+OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
+            return SorguCalistirDataTable(
+                sql,
+                Parametre("@offset", offset),
+                Parametre("@sayfaBoyutu", sayfaBoyutu)
+            );
+        }
+
+        public static void BarkodEkle(int stokId, string barkod)
+        {
+            string temiz = (barkod ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(temiz))
+            {
+                throw new InvalidOperationException("Barkod boş olamaz.");
+            }
+
+            TransactionCalistir((conn, tran) =>
+            {
+                using (SqlCommand kontrol = new SqlCommand("SELECT COUNT(1) FROM tbStokBarkodu WHERE sBarkod = @barkod AND nStokID <> @stokId", conn, tran))
+                {
+                    kontrol.Parameters.AddWithValue("@barkod", temiz);
+                    kontrol.Parameters.AddWithValue("@stokId", stokId);
+                    int adet = Convert.ToInt32(kontrol.ExecuteScalar());
+                    if (adet > 0)
+                    {
+                        throw new InvalidOperationException("Bu barkod başka bir üründe kullanılıyor.");
+                    }
+                }
+
+                using (SqlCommand cmd = new SqlCommand("INSERT INTO tbStokBarkodu (nStokID, sBarkod) VALUES (@stokId, @barkod)", conn, tran))
+                {
+                    cmd.Parameters.AddWithValue("@stokId", stokId);
+                    cmd.Parameters.AddWithValue("@barkod", temiz);
+                    cmd.ExecuteNonQuery();
+                }
+            });
+        }
+
+        public static DataTable UrunleriExportIcinGetir(string arama, string sinif1, string sinif2, string fiyatTipi, string stokDurum)
+        {
+            StringBuilder sql = new StringBuilder(@"
+SELECT s.nStokID,
+       s.sKodu,
+       s.sAciklama,
+       s.sBirimCinsi1 AS sBirimCinsi,
+       b.sBarkod,
+       f.lFiyat,
+       stk.StokMiktari,
+       s.sSinifKodu1 AS sSinifKodu1,
+       s.sSinifKodu2 AS sSinifKodu2
+FROM tbStok s
+OUTER APPLY (SELECT TOP 1 sBarkod FROM tbStokBarkodu b WHERE b.nStokID = s.nStokID ORDER BY b.sBarkod) b
+OUTER APPLY (SELECT TOP 1 lFiyat FROM tbStokFiyati f WHERE f.nStokID = s.nStokID AND f.sFiyatTipi = @fiyatTipi) f
+OUTER APPLY (
+    SELECT SUM(ISNULL(lGirisMiktar1,0)) - SUM(ISNULL(lCikisMiktar1,0)) AS StokMiktari
+    FROM tbStokFisiDetayi d WHERE d.nStokID = s.nStokID
+) stk
+WHERE 1=1");
+            List<SqlParameter> parametreler = new List<SqlParameter>
+            {
+                Parametre("@fiyatTipi", string.IsNullOrWhiteSpace(fiyatTipi) ? Ayarlar.VarsayilanFiyatTipi : fiyatTipi)
+            };
+
+            if (!string.IsNullOrWhiteSpace(arama))
+            {
+                sql.Append(" AND (s.sAciklama LIKE @arama + '%' OR s.sKodu LIKE @arama + '%')");
+                parametreler.Add(Parametre("@arama", arama));
+            }
+
+            if (!string.IsNullOrWhiteSpace(sinif1) && sinif1 != "Hepsi")
+            {
+                sql.Append(" AND s.sSinifKodu1 = @sinif1");
+                parametreler.Add(Parametre("@sinif1", sinif1));
+            }
+
+            if (!string.IsNullOrWhiteSpace(sinif2) && sinif2 != "Hepsi")
+            {
+                sql.Append(" AND s.sSinifKodu2 = @sinif2");
+                parametreler.Add(Parametre("@sinif2", sinif2));
+            }
+
+            if (!string.IsNullOrWhiteSpace(stokDurum))
+            {
+                string durum = stokDurum.ToLowerInvariant();
+                if (durum == "var")
+                {
+                    sql.Append(" AND stk.StokMiktari > 0");
+                }
+                else if (durum == "yok")
+                {
+                    sql.Append(" AND stk.StokMiktari <= 0");
+                }
+            }
+
+            sql.Append(" ORDER BY s.nStokID");
+            return SorguCalistirDataTable(sql.ToString(), parametreler.ToArray());
+        }
+
+        private static decimal YuvarlaTopluFiyat(decimal fiyat, string yuvarlamaModu)
+        {
+            if (string.IsNullOrWhiteSpace(yuvarlamaModu) || yuvarlamaModu == "yok")
+            {
+                return Yardimcilar.YuvarlaKurus(fiyat);
+            }
+
+            if (!decimal.TryParse(yuvarlamaModu, out decimal adim) || adim <= 0)
+            {
+                return Yardimcilar.YuvarlaKurus(fiyat);
+            }
+
+            decimal bolum = fiyat / adim;
+            decimal yuvarlanmis = Math.Round(bolum, 0, MidpointRounding.AwayFromZero) * adim;
+            return Yardimcilar.YuvarlaKurus(yuvarlanmis);
         }
 
         private static string IlkKolonuBul(HashSet<string> kolonlar, params string[] adaylar)
