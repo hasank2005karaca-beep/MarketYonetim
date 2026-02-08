@@ -3060,21 +3060,129 @@ WHERE 1=1");
 
             bool odemeIdentity = IdentityKolonVarMi(conn, tran, "tbOdeme", "nOdemeID");
             string odemeIdKolon = IlkKolonuBul(odemeKolonlar, "nOdemeID", "nTahsilatID", "nIslemID");
+            string odemeIdTipi = string.IsNullOrWhiteSpace(odemeIdKolon) ? null : KolonTipiGetir(conn, tran, "tbOdeme", odemeIdKolon);
+            string odemeSekliKolon = IlkKolonuBul(odemeKolonlar, "sOdemeSekli", "sOdemeTipi");
+            string tutarKolon = IlkKolonuBul(odemeKolonlar, "lOdemeTutar", "lTutar");
+            string kasiyerKolon = IlkKolonuBul(odemeKolonlar, "sKasiyerRumuzu", "sKasiyer");
+            string kullaniciKolon = IlkKolonuBul(odemeKolonlar, "sKullaniciAdi", "sKullanici");
+            string magazaKolon = IlkKolonuBul(odemeKolonlar, "sMagaza", "sDepo");
+            string dovizKolon = IlkKolonuBul(odemeKolonlar, "sDovizCinsi", "sDoviz");
+            string dovizTutarKolon = IlkKolonuBul(odemeKolonlar, "lDovizTutar", "lDoviz");
+            string makbuzKolon = IlkKolonuBul(odemeKolonlar, "lMakbuzNo");
+            string odemeNoKolon = IlkKolonuBul(odemeKolonlar, "lOdemeNo", "nOdemeNo");
+            string taksitKolon = IlkKolonuBul(odemeKolonlar, "nTaksitID", "nTaksitId");
+            string iadeKolon = IlkKolonuBul(odemeKolonlar, "nIadeAlisverisID", "nIadeAlisverisId");
+            string muhasebeKolon = IlkKolonuBul(odemeKolonlar, "bMuhasebeyeIslendimi", "bMuhasebeyeIslendi");
+            string kasaKolon = IlkKolonuBul(odemeKolonlar, "nKasaNo", "nKasaID");
+            string kartKolon = IlkKolonuBul(odemeKolonlar, "sKartNo", "sKart");
+            string kayitTarihKolon = IlkKolonuBul(odemeKolonlar, "dteKayitTarihi", "dteKayit", "dteIslemTarihi");
+            string valorTarihKolon = IlkKolonuBul(odemeKolonlar, "dteValorTarihi", "dteValor");
+            string odemeTarihKolon = IlkKolonuBul(odemeKolonlar, "dteOdemeTarihi", "dteTarih");
+            string odemeKoduKolon = IlkKolonuBul(odemeKolonlar, "nOdemeKodu");
 
             foreach (var odeme in odemeler)
             {
                 Dictionary<string, object> odemeKaydi = new Dictionary<string, object>
                 {
                     ["nAlisverisID"] = satisId,
-                    ["dteOdemeTarihi"] = DateTime.Now,
-                    ["lTutar"] = odeme.Tutar,
-                    ["sOdemeTipi"] = odeme.Tip,
                     ["sAciklama"] = $"Satış Ödeme - {odeme.Tip}"
                 };
 
+                if (!string.IsNullOrWhiteSpace(odemeTarihKolon))
+                {
+                    odemeKaydi[odemeTarihKolon] = DateTime.Now;
+                }
+
+                if (!string.IsNullOrWhiteSpace(kayitTarihKolon))
+                {
+                    odemeKaydi[kayitTarihKolon] = DateTime.Now;
+                }
+
+                if (!string.IsNullOrWhiteSpace(valorTarihKolon))
+                {
+                    odemeKaydi[valorTarihKolon] = DateTime.Now;
+                }
+
+                if (!string.IsNullOrWhiteSpace(odemeSekliKolon))
+                {
+                    odemeKaydi[odemeSekliKolon] = OdemeSekliKoduGetir(odeme.Tip);
+                }
+
+                if (!string.IsNullOrWhiteSpace(tutarKolon))
+                {
+                    odemeKaydi[tutarKolon] = odeme.Tutar;
+                }
+
+                if (!string.IsNullOrWhiteSpace(odemeKoduKolon))
+                {
+                    odemeKaydi[odemeKoduKolon] = 1;
+                }
+
+                if (!string.IsNullOrWhiteSpace(kasiyerKolon))
+                {
+                    odemeKaydi[kasiyerKolon] = Ayarlar.KasiyerRumuzu ?? string.Empty;
+                }
+
+                if (!string.IsNullOrWhiteSpace(kullaniciKolon))
+                {
+                    odemeKaydi[kullaniciKolon] = string.IsNullOrWhiteSpace(Ayarlar.KasiyerRumuzu)
+                        ? (Environment.UserName ?? string.Empty)
+                        : Ayarlar.KasiyerRumuzu;
+                }
+
+                if (!string.IsNullOrWhiteSpace(magazaKolon))
+                {
+                    odemeKaydi[magazaKolon] = Ayarlar.DepoKodu ?? string.Empty;
+                }
+
+                if (!string.IsNullOrWhiteSpace(dovizKolon))
+                {
+                    odemeKaydi[dovizKolon] = string.Empty;
+                }
+
+                if (!string.IsNullOrWhiteSpace(dovizTutarKolon))
+                {
+                    odemeKaydi[dovizTutarKolon] = 0m;
+                }
+
+                if (!string.IsNullOrWhiteSpace(makbuzKolon))
+                {
+                    odemeKaydi[makbuzKolon] = 0;
+                }
+
+                if (!string.IsNullOrWhiteSpace(odemeNoKolon))
+                {
+                    odemeKaydi[odemeNoKolon] = 0;
+                }
+
+                if (!string.IsNullOrWhiteSpace(taksitKolon))
+                {
+                    odemeKaydi[taksitKolon] = KolonSayisalMi(KolonTipiGetir(conn, tran, "tbOdeme", taksitKolon)) ? 0 : string.Empty;
+                }
+
+                if (!string.IsNullOrWhiteSpace(iadeKolon))
+                {
+                    odemeKaydi[iadeKolon] = KolonSayisalMi(KolonTipiGetir(conn, tran, "tbOdeme", iadeKolon)) ? 0 : string.Empty;
+                }
+
+                if (!string.IsNullOrWhiteSpace(muhasebeKolon))
+                {
+                    odemeKaydi[muhasebeKolon] = 0;
+                }
+
+                if (!string.IsNullOrWhiteSpace(kasaKolon))
+                {
+                    odemeKaydi[kasaKolon] = KolonSayisalMi(KolonTipiGetir(conn, tran, "tbOdeme", kasaKolon)) ? 1 : "1";
+                }
+
+                if (!string.IsNullOrWhiteSpace(kartKolon))
+                {
+                    odemeKaydi[kartKolon] = string.Empty;
+                }
+
                 if (!odemeIdentity && !string.IsNullOrWhiteSpace(odemeIdKolon))
                 {
-                    odemeKaydi[odemeIdKolon] = YeniIdUret(conn, tran, "tbOdeme", odemeIdKolon);
+                    odemeKaydi[odemeIdKolon] = OdemeIdOlustur(conn, tran, odemeIdKolon, odemeIdTipi);
                 }
 
                 DinamikInsert(conn, tran, "tbOdeme", odemeKaydi, odemeIdentity);
