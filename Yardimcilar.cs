@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Reflection;
+using System.Windows.Forms;
 
 namespace MarketYonetim
 {
@@ -58,6 +60,17 @@ namespace MarketYonetim
         public static string TarihFormatla(DateTime tarih)
         {
             return tarih.ToString("dd.MM.yyyy", CultureInfo.GetCultureInfo("tr-TR"));
+        }
+
+        public static void DoubleBufferedAktifEt(Control kontrol)
+        {
+            if (kontrol == null)
+            {
+                return;
+            }
+
+            PropertyInfo prop = kontrol.GetType().GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic);
+            prop?.SetValue(kontrol, true, null);
         }
     }
 }
