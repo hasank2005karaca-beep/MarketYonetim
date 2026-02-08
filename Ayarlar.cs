@@ -43,8 +43,6 @@ namespace MarketYonetim
         public static string StokCikisFisTipi { get; set; } = "";
         public static string SatisFisTipiPesin { get; set; } = "";
         public static string SatisFisTipiVeresiye { get; set; } = "";
-        public static string NakitOdemeSekli { get; set; } = "N";
-        public static string KartOdemeSekli { get; set; } = "1";
 
         public static bool AyarDosyasiVarMi()
         {
@@ -99,12 +97,6 @@ namespace MarketYonetim
                                 case "SatisFisTipiVeresiye":
                                     SatisFisTipiVeresiye = deger;
                                     break;
-                                case "NakitOdemeSekli":
-                                    NakitOdemeSekli = deger;
-                                    break;
-                                case "KartOdemeSekli":
-                                    KartOdemeSekli = deger;
-                                    break;
                             }
                         }
                     }
@@ -139,9 +131,7 @@ namespace MarketYonetim
                     $"StokGirisFisTipi={StokGirisFisTipi}",
                     $"StokCikisFisTipi={StokCikisFisTipi}",
                     $"SatisFisTipiPesin={SatisFisTipiPesin}",
-                    $"SatisFisTipiVeresiye={SatisFisTipiVeresiye}",
-                    $"NakitOdemeSekli={NakitOdemeSekli}",
-                    $"KartOdemeSekli={KartOdemeSekli}"
+                    $"SatisFisTipiVeresiye={SatisFisTipiVeresiye}"
                 };
                 File.WriteAllLines(ayarDosyasi, satirlar);
             }

@@ -7,7 +7,6 @@ using System.Text;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Windows.Forms;
-using System.Threading;
 
 namespace MarketYonetim
 {
@@ -45,7 +44,6 @@ namespace MarketYonetim
         private static string _stokCikisFisTipi;
         private static string _satisFisTipiPesin;
         private static string _satisFisTipiVeresiye;
-        private static int _odemeIdSayac;
         private const string DiscoveryTabloYapisiSql = @"
 SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE, COLUMN_DEFAULT
 FROM INFORMATION_SCHEMA.COLUMNS
@@ -488,7 +486,7 @@ WHERE t.name = @tablo AND c.is_nullable = 0 AND c.is_identity = 0 AND d.object_i
                     HashSet<string> kolonlar = TabloKolonlariniGetir(conn, tran, "tbOdeme");
                     string alisverisKolon = IlkKolonuBul(kolonlar, "nAlisverisID", "nAlisverisId", "nSatisID");
                     string odemeSekliKolon = IlkKolonuBul(kolonlar, "sOdemeSekli", "sOdemeTipi", "sOdeme");
-                    string tutarKolon = IlkKolonuBul(kolonlar, "lOdemeTutar", "lTutar");
+                    string tutarKolon = IlkKolonuBul(kolonlar, "lTutar", "nTutar");
                     string tarihKolon = IlkKolonuBul(kolonlar, "dteKayitTarihi", "dteOdemeTarihi", "dteTarih", "dTarih", "dteIslemTarihi");
 
                     if (string.IsNullOrWhiteSpace(alisverisKolon))
@@ -501,7 +499,7 @@ WHERE t.name = @tablo AND c.is_nullable = 0 AND c.is_identity = 0 AND d.object_i
                     }
                     if (string.IsNullOrWhiteSpace(tutarKolon))
                     {
-                        eksikler.Add("tbOdeme: lOdemeTutar (veya lTutar) bulunamadı");
+                        eksikler.Add("tbOdeme: lTutar (veya alternatif) bulunamadı");
                     }
                     if (string.IsNullOrWhiteSpace(tarihKolon))
                     {
@@ -2512,103 +2510,13 @@ WHERE b.sBarkod = @barkod";
 
                 HashSet<string> odemePlan = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    "nAlisverisID","sAciklama"
+                    "nAlisverisID","dteOdemeTarihi","lTutar","sOdemeTipi","sAciklama"
                 };
                 HashSet<string> odemeKolonlar = TabloKolonlariniGetir(conn, tran, "tbOdeme");
                 string odemeIdKolon = IlkKolonuBul(odemeKolonlar, "nOdemeID", "nTahsilatID", "nIslemID");
                 if (!string.IsNullOrWhiteSpace(odemeIdKolon) && !IdentityKolonVarMi(conn, tran, "tbOdeme", odemeIdKolon))
                 {
                     odemePlan.Add(odemeIdKolon);
-                }
-                string odemeSekliKolon = IlkKolonuBul(odemeKolonlar, "sOdemeSekli", "sOdemeTipi");
-                if (!string.IsNullOrWhiteSpace(odemeSekliKolon))
-                {
-                    odemePlan.Add(odemeSekliKolon);
-                }
-                string tutarKolon = IlkKolonuBul(odemeKolonlar, "lOdemeTutar", "lTutar");
-                if (!string.IsNullOrWhiteSpace(tutarKolon))
-                {
-                    odemePlan.Add(tutarKolon);
-                }
-                string odemeTarihKolon = IlkKolonuBul(odemeKolonlar, "dteOdemeTarihi", "dteTarih");
-                if (!string.IsNullOrWhiteSpace(odemeTarihKolon))
-                {
-                    odemePlan.Add(odemeTarihKolon);
-                }
-                string kayitTarihKolon = IlkKolonuBul(odemeKolonlar, "dteKayitTarihi", "dteKayit", "dteIslemTarihi");
-                if (!string.IsNullOrWhiteSpace(kayitTarihKolon))
-                {
-                    odemePlan.Add(kayitTarihKolon);
-                }
-                string valorTarihKolon = IlkKolonuBul(odemeKolonlar, "dteValorTarihi", "dteValor");
-                if (!string.IsNullOrWhiteSpace(valorTarihKolon))
-                {
-                    odemePlan.Add(valorTarihKolon);
-                }
-                string odemeKoduKolon = IlkKolonuBul(odemeKolonlar, "nOdemeKodu");
-                if (!string.IsNullOrWhiteSpace(odemeKoduKolon))
-                {
-                    odemePlan.Add(odemeKoduKolon);
-                }
-                string kasiyerKolon = IlkKolonuBul(odemeKolonlar, "sKasiyerRumuzu", "sKasiyer");
-                if (!string.IsNullOrWhiteSpace(kasiyerKolon))
-                {
-                    odemePlan.Add(kasiyerKolon);
-                }
-                string kullaniciKolon = IlkKolonuBul(odemeKolonlar, "sKullaniciAdi", "sKullanici");
-                if (!string.IsNullOrWhiteSpace(kullaniciKolon))
-                {
-                    odemePlan.Add(kullaniciKolon);
-                }
-                string magazaKolon = IlkKolonuBul(odemeKolonlar, "sMagaza", "sDepo");
-                if (!string.IsNullOrWhiteSpace(magazaKolon))
-                {
-                    odemePlan.Add(magazaKolon);
-                }
-                string dovizKolon = IlkKolonuBul(odemeKolonlar, "sDovizCinsi", "sDoviz");
-                if (!string.IsNullOrWhiteSpace(dovizKolon))
-                {
-                    odemePlan.Add(dovizKolon);
-                }
-                string dovizTutarKolon = IlkKolonuBul(odemeKolonlar, "lDovizTutar", "lDoviz");
-                if (!string.IsNullOrWhiteSpace(dovizTutarKolon))
-                {
-                    odemePlan.Add(dovizTutarKolon);
-                }
-                string makbuzKolon = IlkKolonuBul(odemeKolonlar, "lMakbuzNo");
-                if (!string.IsNullOrWhiteSpace(makbuzKolon))
-                {
-                    odemePlan.Add(makbuzKolon);
-                }
-                string odemeNoKolon = IlkKolonuBul(odemeKolonlar, "lOdemeNo", "nOdemeNo");
-                if (!string.IsNullOrWhiteSpace(odemeNoKolon))
-                {
-                    odemePlan.Add(odemeNoKolon);
-                }
-                string taksitKolon = IlkKolonuBul(odemeKolonlar, "nTaksitID", "nTaksitId");
-                if (!string.IsNullOrWhiteSpace(taksitKolon))
-                {
-                    odemePlan.Add(taksitKolon);
-                }
-                string iadeKolon = IlkKolonuBul(odemeKolonlar, "nIadeAlisverisID", "nIadeAlisverisId");
-                if (!string.IsNullOrWhiteSpace(iadeKolon))
-                {
-                    odemePlan.Add(iadeKolon);
-                }
-                string muhasebeKolon = IlkKolonuBul(odemeKolonlar, "bMuhasebeyeIslendimi", "bMuhasebeyeIslendi");
-                if (!string.IsNullOrWhiteSpace(muhasebeKolon))
-                {
-                    odemePlan.Add(muhasebeKolon);
-                }
-                string kasaKolon = IlkKolonuBul(odemeKolonlar, "nKasaNo", "nKasaID");
-                if (!string.IsNullOrWhiteSpace(kasaKolon))
-                {
-                    odemePlan.Add(kasaKolon);
-                }
-                string kartKolon = IlkKolonuBul(odemeKolonlar, "sKartNo", "sKart");
-                if (!string.IsNullOrWhiteSpace(kartKolon))
-                {
-                    odemePlan.Add(kartKolon);
                 }
 
                 HashSet<string> nakitPlan = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -3345,71 +3253,6 @@ WHERE TABLE_NAME = @tablo";
                 object sonuc = cmd.ExecuteScalar();
                 return sonuc != null && sonuc != DBNull.Value && Convert.ToInt32(sonuc) > 0;
             }
-        }
-
-        private static string KolonTipiGetir(SqlConnection conn, SqlTransaction tran, string tablo, string kolon)
-        {
-            if (string.IsNullOrWhiteSpace(tablo) || string.IsNullOrWhiteSpace(kolon))
-            {
-                return string.Empty;
-            }
-
-            const string sql = @"SELECT DATA_TYPE
-FROM INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_NAME = @tablo AND COLUMN_NAME = @kolon";
-            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
-            {
-                cmd.Parameters.AddWithValue("@tablo", tablo);
-                cmd.Parameters.AddWithValue("@kolon", kolon);
-                object sonuc = cmd.ExecuteScalar();
-                return sonuc == null || sonuc == DBNull.Value ? string.Empty : sonuc.ToString();
-            }
-        }
-
-        private static bool KolonSayisalMi(string dataType)
-        {
-            if (string.IsNullOrWhiteSpace(dataType))
-            {
-                return false;
-            }
-            string tip = dataType.ToLowerInvariant();
-            return tip.Contains("int") || tip == "decimal" || tip == "numeric" || tip == "money" || tip == "smallmoney" || tip == "float" || tip == "real";
-        }
-
-        private static bool KolonIntegerMi(string dataType)
-        {
-            if (string.IsNullOrWhiteSpace(dataType))
-            {
-                return false;
-            }
-            string tip = dataType.ToLowerInvariant();
-            return tip == "int" || tip == "bigint" || tip == "smallint" || tip == "tinyint";
-        }
-
-        private static object OdemeIdOlustur(SqlConnection conn, SqlTransaction tran, string odemeIdKolon, string odemeIdTipi)
-        {
-            if (KolonIntegerMi(odemeIdTipi))
-            {
-                return YeniIdUret(conn, tran, "tbOdeme", odemeIdKolon);
-            }
-            return OdemeIdUret();
-        }
-
-        private static string OdemeIdUret()
-        {
-            int sira = Interlocked.Increment(ref _odemeIdSayac) % 100;
-            string taban = DateTime.Now.ToString("yyyyMMddHHmmssffff");
-            return $"{taban}{sira:D2}";
-        }
-
-        private static string OdemeSekliKoduGetir(string odemeTipi)
-        {
-            if (string.Equals(odemeTipi, "Kart", StringComparison.OrdinalIgnoreCase)
-                || odemeTipi.IndexOf("Kart", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return string.IsNullOrWhiteSpace(Ayarlar.KartOdemeSekli) ? "1" : Ayarlar.KartOdemeSekli;
-            }
-            return string.IsNullOrWhiteSpace(Ayarlar.NakitOdemeSekli) ? "N" : Ayarlar.NakitOdemeSekli;
         }
 
         private static HashSet<string> NotNullKolonlariGetir(SqlConnection conn, SqlTransaction tran, string tablo)
