@@ -34,6 +34,8 @@ namespace MarketYonetim
         public static string KullaniciAdi { get; set; } = "";
         public static string Sifre { get; set; } = "";
         public static bool WindowsAuth { get; set; } = true;
+        public static string VarsayilanFiyatTipi { get; set; } = "1";
+        public static int KritikStokEsigi { get; set; } = 5;
 
         public static void YukleAyarlar()
         {
@@ -57,6 +59,13 @@ namespace MarketYonetim
                                 case "Kullanici": KullaniciAdi = deger; break;
                                 case "Sifre": Sifre = deger; break;
                                 case "WindowsAuth": WindowsAuth = deger == "1"; break;
+                                case "VarsayilanFiyatTipi": VarsayilanFiyatTipi = deger; break;
+                                case "KritikStokEsigi":
+                                    if (int.TryParse(deger, out int esik))
+                                    {
+                                        KritikStokEsigi = esik;
+                                    }
+                                    break;
                             }
                         }
                     }
@@ -80,7 +89,9 @@ namespace MarketYonetim
                     $"Veritabani={VeritabaniAdi}",
                     $"Kullanici={KullaniciAdi}",
                     $"Sifre={Sifre}",
-                    $"WindowsAuth={(WindowsAuth ? "1" : "0")}"
+                    $"WindowsAuth={(WindowsAuth ? "1" : "0")}",
+                    $"VarsayilanFiyatTipi={VarsayilanFiyatTipi}",
+                    $"KritikStokEsigi={KritikStokEsigi}"
                 };
                 File.WriteAllLines(ayarDosyasi, satirlar);
             }
