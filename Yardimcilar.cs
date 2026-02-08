@@ -23,7 +23,7 @@ namespace MarketYonetim
                 return YuvarlaKurus(kdvDahilTutar);
             }
 
-            decimal oran = kdvOrani / 100m;
+            decimal oran = KdvOraniNormalize(kdvOrani);
             decimal matrah = kdvDahilTutar / (1 + oran);
             return YuvarlaKurus(matrah);
         }
@@ -32,6 +32,16 @@ namespace MarketYonetim
         {
             decimal matrah = KdvMatrahHesapla(kdvDahilTutar, kdvOrani);
             return YuvarlaKurus(kdvDahilTutar - matrah);
+        }
+
+        public static decimal KdvOraniNormalize(decimal kdvOrani)
+        {
+            return kdvOrani >= 1m ? kdvOrani / 100m : kdvOrani;
+        }
+
+        public static decimal KdvOraniYuzdeGoster(decimal kdvOrani)
+        {
+            return kdvOrani < 1m ? kdvOrani * 100m : kdvOrani;
         }
 
         public static Dictionary<decimal, (decimal Matrah, decimal Kdv)> KdvDagit(IEnumerable<(decimal Tutar, decimal KdvOrani)> satirlar)

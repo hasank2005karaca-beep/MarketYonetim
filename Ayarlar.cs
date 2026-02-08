@@ -39,6 +39,12 @@ namespace MarketYonetim
         public static decimal VarsayilanKdvOrani { get; set; } = 20m;
         // S7-FIX: Varsayılan fiyat tipi
         public static string VarsayilanFiyatTipi { get; set; } = "STD";
+        public static string StokGirisFisTipi { get; set; } = "";
+        public static string StokCikisFisTipi { get; set; } = "";
+        public static string SatisFisTipiPesin { get; set; } = "";
+        public static string SatisFisTipiVeresiye { get; set; } = "";
+        public static string NakitOdemeSekli { get; set; } = "N";
+        public static string KartOdemeSekli { get; set; } = "1";
 
         public static bool AyarDosyasiVarMi()
         {
@@ -81,6 +87,24 @@ namespace MarketYonetim
                                 case "VarsayilanFiyatTipi":
                                     VarsayilanFiyatTipi = deger;
                                     break;
+                                case "StokGirisFisTipi":
+                                    StokGirisFisTipi = deger;
+                                    break;
+                                case "StokCikisFisTipi":
+                                    StokCikisFisTipi = deger;
+                                    break;
+                                case "SatisFisTipiPesin":
+                                    SatisFisTipiPesin = deger;
+                                    break;
+                                case "SatisFisTipiVeresiye":
+                                    SatisFisTipiVeresiye = deger;
+                                    break;
+                                case "NakitOdemeSekli":
+                                    NakitOdemeSekli = deger;
+                                    break;
+                                case "KartOdemeSekli":
+                                    KartOdemeSekli = deger;
+                                    break;
                             }
                         }
                     }
@@ -111,7 +135,13 @@ namespace MarketYonetim
                     $"KasiyerRumuzu={KasiyerRumuzu}",
                     $"VarsayilanKdvOrani={VarsayilanKdvOrani}",
                     // S7-FIX: Varsayılan fiyat tipi kaydet
-                    $"VarsayilanFiyatTipi={VarsayilanFiyatTipi}"
+                    $"VarsayilanFiyatTipi={VarsayilanFiyatTipi}",
+                    $"StokGirisFisTipi={StokGirisFisTipi}",
+                    $"StokCikisFisTipi={StokCikisFisTipi}",
+                    $"SatisFisTipiPesin={SatisFisTipiPesin}",
+                    $"SatisFisTipiVeresiye={SatisFisTipiVeresiye}",
+                    $"NakitOdemeSekli={NakitOdemeSekli}",
+                    $"KartOdemeSekli={KartOdemeSekli}"
                 };
                 File.WriteAllLines(ayarDosyasi, satirlar);
             }
