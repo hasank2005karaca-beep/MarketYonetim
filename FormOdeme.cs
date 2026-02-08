@@ -1,331 +1,420 @@
 using System;
 using System.Data;
-using System.Data.SqlClient;
 using System.Drawing;
+using System.Globalization;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace MarketYonetim
 {
     public partial class FormOdeme : Form
     {
-        private DataTable sepet;
-        private decimal toplamTutar;
-        private int musteriId;
-        private decimal nakit = 0;
-        private decimal krediKarti = 0;
+        private readonly DataTable sepet;
+        private readonly int musteriId;
+        private decimal toplamBrut;
+        private decimal satirIskontoToplam;
+        private decimal dipIskontoTutar;
+        private decimal netTutar;
+        private decimal kdvToplam;
 
+        private DataGridView dgvSepet;
+        private TextBox txtDipIskonto;
+        private Label lblMalBedeli;
+        private Label lblIskonto;
+        private Label lblNet;
+        private Label lblKdv;
+        private ListView lvKdvDagitim;
+        private RadioButton rdoNakit;
+        private RadioButton rdoKart;
+        private RadioButton rdoKarisik;
+        private RadioButton rdoVeresiye;
         private TextBox txtNakit;
-        private TextBox txtKrediKarti;
-        private Label lblToplam;
-        private Label lblKalan;
+        private TextBox txtKart;
         private Label lblParaUstu;
-        private Button btnOdemeYap;
-        private ComboBox cmbOdemeSekli;
+        private Button btnOnay;
 
-        public FormOdeme(DataTable sepetData, decimal toplam, int musteri)
+        public FormOdeme(DataTable sepetData, int musteri)
         {
-            sepet = sepetData;
-            toplamTutar = toplam;
+            sepet = sepetData.Copy();
             musteriId = musteri;
             InitializeComponent();
+            Hesapla();
         }
 
         private void InitializeComponent()
         {
-            this.Text = "💰 Ödeme Al";
-            this.Size = new Size(500, 500);
-            this.StartPosition = FormStartPosition.CenterParent;
-            this.FormBorderStyle = FormBorderStyle.FixedDialog;
-            this.MaximizeBox = false;
-            this.MinimizeBox = false;
-            this.BackColor = Color.White;
-            this.Font = new Font("Segoe UI", 11);
+            AutoScaleMode = AutoScaleMode.Dpi;
+            Font = new Font("Segoe UI", 10);
+            Text = "💰 Ödeme";
+            Size = new Size(900, 650);
+            StartPosition = FormStartPosition.CenterParent;
+            BackColor = Color.White;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
 
-            // Başlık Panel
-            Panel panelBaslik = new Panel
+            var layout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1
+            };
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
+
+            layout.Controls.Add(OlusturSepetPanel(), 0, 0);
+            layout.Controls.Add(OlusturOdemePanel(), 1, 0);
+
+            Controls.Add(layout);
+        }
+
+        private Control OlusturSepetPanel()
+        {
+            var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
+
+            dgvSepet = new DataGridView
             {
                 Dock = DockStyle.Top,
-                Height = 80,
-                BackColor = Color.FromArgb(0, 122, 204)
+                Height = 350,
+                ReadOnly = true,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                BackgroundColor = Color.White,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+                RowHeadersVisible = false
             };
 
-            lblToplam = new Label
+            dgvSepet.DataSource = sepet;
+            dgvSepet.Columns["nStokID"].Visible = false;
+            dgvSepet.Columns["sBirimCinsi"].Visible = false;
+            dgvSepet.Columns["nIskontoYuzde"].HeaderText = "İskonto%";
+            dgvSepet.Columns["lBirimFiyat"].HeaderText = "Birim Fiyat";
+            dgvSepet.Columns["lSatirToplam"].HeaderText = "Satır Toplam";
+            dgvSepet.Columns["nKdvOrani"].HeaderText = "KDV%";
+            dgvSepet.Columns["lKdvTutar"].Visible = false;
+
+            foreach (DataGridViewColumn col in dgvSepet.Columns)
             {
-                Text = $"TOPLAM: ₺{toplamTutar:N2}",
-                Font = new Font("Segoe UI", 26, FontStyle.Bold),
-                ForeColor = Color.White,
+                if (col.DataPropertyName == "lBirimFiyat" || col.DataPropertyName == "lSatirToplam")
+                {
+                    col.DefaultCellStyle.Format = "N2";
+                }
+            }
+
+            var lblDip = new Label
+            {
+                Text = "Dip İskonto %",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
                 AutoSize = true,
-                Location = new Point(20, 22)
-            };
-            panelBaslik.Controls.Add(lblToplam);
-
-            // Ödeme Şekli
-            Label lblOdemeSekli = new Label
-            {
-                Text = "Ödeme Şekli:",
-                Location = new Point(30, 100),
-                AutoSize = true
+                Location = new Point(10, 370)
             };
 
-            cmbOdemeSekli = new ComboBox
+            txtDipIskonto = new TextBox
             {
-                Location = new Point(30, 130),
-                Size = new Size(420, 30),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Font = new Font("Segoe UI", 12)
+                Text = "0",
+                Width = 80,
+                Location = new Point(10, 395)
             };
-            cmbOdemeSekli.Items.AddRange(new object[] { "Nakit", "Kredi Kartı", "Karışık (Nakit + Kart)" });
-            cmbOdemeSekli.SelectedIndex = 0;
-            cmbOdemeSekli.SelectedIndexChanged += CmbOdemeSekli_SelectedIndexChanged;
+            txtDipIskonto.TextChanged += (_, __) => Hesapla();
 
-            // Nakit
-            Label lblNakit = new Label
+            var lblDagitim = new Label
             {
-                Text = "Nakit (₺):",
-                Location = new Point(30, 180),
-                AutoSize = true
+                Text = "KDV Dağılımı",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(10, 430)
+            };
+
+            lvKdvDagitim = new ListView
+            {
+                View = View.Details,
+                Width = 480,
+                Height = 160,
+                Location = new Point(10, 455),
+                FullRowSelect = true
+            };
+            lvKdvDagitim.Columns.Add("Oran", 80);
+            lvKdvDagitim.Columns.Add("Matrah", 180);
+            lvKdvDagitim.Columns.Add("KDV", 180);
+
+            panel.Controls.Add(dgvSepet);
+            panel.Controls.Add(lblDip);
+            panel.Controls.Add(txtDipIskonto);
+            panel.Controls.Add(lblDagitim);
+            panel.Controls.Add(lvKdvDagitim);
+
+            return panel;
+        }
+
+        private Control OlusturOdemePanel()
+        {
+            var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
+
+            lblMalBedeli = new Label
+            {
+                Text = "Mal Bedeli: ₺0,00",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(10, 20)
+            };
+
+            lblIskonto = new Label
+            {
+                Text = "İskonto: ₺0,00",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(10, 50)
+            };
+
+            lblNet = new Label
+            {
+                Text = "Net Tutar: ₺0,00",
+                Font = new Font("Segoe UI", 13, FontStyle.Bold),
+                ForeColor = Color.FromArgb(0, 200, 83),
+                AutoSize = true,
+                Location = new Point(10, 80)
+            };
+
+            lblKdv = new Label
+            {
+                Text = "KDV: ₺0,00",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(10, 115)
+            };
+
+            var grpOdeme = new GroupBox
+            {
+                Text = "Ödeme Tipi",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                Width = 300,
+                Height = 180,
+                Location = new Point(10, 150)
+            };
+
+            rdoNakit = new RadioButton { Text = "Nakit", Location = new Point(15, 30), Checked = true };
+            rdoKart = new RadioButton { Text = "Kredi Kartı", Location = new Point(15, 60) };
+            rdoKarisik = new RadioButton { Text = "Karışık", Location = new Point(15, 90) };
+            rdoVeresiye = new RadioButton { Text = "Veresiye", Location = new Point(15, 120) };
+
+            rdoNakit.CheckedChanged += (_, __) => OdemeTipiDegisti();
+            rdoKart.CheckedChanged += (_, __) => OdemeTipiDegisti();
+            rdoKarisik.CheckedChanged += (_, __) => OdemeTipiDegisti();
+            rdoVeresiye.CheckedChanged += (_, __) => OdemeTipiDegisti();
+
+            grpOdeme.Controls.Add(rdoNakit);
+            grpOdeme.Controls.Add(rdoKart);
+            grpOdeme.Controls.Add(rdoKarisik);
+            grpOdeme.Controls.Add(rdoVeresiye);
+
+            var lblNakit = new Label
+            {
+                Text = "Nakit",
+                AutoSize = true,
+                Location = new Point(10, 350)
             };
 
             txtNakit = new TextBox
             {
-                Location = new Point(30, 210),
-                Size = new Size(200, 35),
-                Font = new Font("Segoe UI", 16),
-                Text = toplamTutar.ToString("N2"),
-                TextAlign = HorizontalAlignment.Right
+                Width = 150,
+                Location = new Point(10, 375)
             };
-            txtNakit.TextChanged += OdemeTutarDegisti;
-            txtNakit.Enter += (s, e) => txtNakit.SelectAll();
+            txtNakit.TextChanged += (_, __) => ParaUstuHesapla();
 
-            // Kredi Kartı
-            Label lblKredi = new Label
+            var lblKart = new Label
             {
-                Text = "Kredi Kartı (₺):",
-                Location = new Point(250, 180),
-                AutoSize = true
+                Text = "Kredi Kartı",
+                AutoSize = true,
+                Location = new Point(10, 410)
             };
 
-            txtKrediKarti = new TextBox
+            txtKart = new TextBox
             {
-                Location = new Point(250, 210),
-                Size = new Size(200, 35),
-                Font = new Font("Segoe UI", 16),
-                Text = "0,00",
-                TextAlign = HorizontalAlignment.Right,
-                Enabled = false
+                Width = 150,
+                Location = new Point(10, 435)
             };
-            txtKrediKarti.TextChanged += OdemeTutarDegisti;
-            txtKrediKarti.Enter += (s, e) => txtKrediKarti.SelectAll();
-
-            // Kalan ve Para Üstü
-            lblKalan = new Label
-            {
-                Text = "Kalan: ₺0,00",
-                Font = new Font("Segoe UI", 14, FontStyle.Bold),
-                ForeColor = Color.FromArgb(0, 122, 204),
-                Location = new Point(30, 270),
-                AutoSize = true
-            };
+            txtKart.TextChanged += (_, __) => ParaUstuHesapla();
 
             lblParaUstu = new Label
             {
                 Text = "Para Üstü: ₺0,00",
-                Font = new Font("Segoe UI", 18, FontStyle.Bold),
-                ForeColor = Color.FromArgb(0, 200, 83),
-                Location = new Point(30, 310),
-                AutoSize = true
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(10, 470)
             };
 
-            // Hızlı tuşlar
-            FlowLayoutPanel panelHizli = new FlowLayoutPanel
+            btnOnay = new Button
             {
-                Location = new Point(30, 360),
-                Size = new Size(420, 45),
-                FlowDirection = FlowDirection.LeftToRight
-            };
-
-            foreach (int tutar in new int[] { 10, 20, 50, 100, 200, 500 })
-            {
-                Button btn = new Button
-                {
-                    Text = $"₺{tutar}",
-                    Size = new Size(65, 38),
-                    BackColor = Color.FromArgb(240, 240, 240),
-                    FlatStyle = FlatStyle.Flat,
-                    Font = new Font("Segoe UI", 10),
-                    Tag = tutar
-                };
-                btn.Click += (s, e) => {
-                    decimal mevcut = 0;
-                    decimal.TryParse(txtNakit.Text.Replace(".", "").Replace(",", "."), 
-                        System.Globalization.NumberStyles.Any, 
-                        System.Globalization.CultureInfo.InvariantCulture, out mevcut);
-                    txtNakit.Text = (mevcut + (int)((Button)s).Tag).ToString("N2");
-                };
-                panelHizli.Controls.Add(btn);
-            }
-
-            // Ödeme Yap Butonu
-            btnOdemeYap = new Button
-            {
-                Text = "✓ ÖDEMEYİ TAMAMLA",
-                Font = new Font("Segoe UI", 14, FontStyle.Bold),
-                Size = new Size(420, 50),
-                Location = new Point(30, 415),
+                Text = "Ödemeyi Onayla",
                 BackColor = Color.FromArgb(0, 200, 83),
                 ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
+                FlatStyle = FlatStyle.Flat,
+                Width = 250,
+                Height = 45,
+                Location = new Point(10, 520)
             };
-            btnOdemeYap.Click += BtnOdemeYap_Click;
+            btnOnay.Click += BtnOnay_Click;
 
-            this.Controls.AddRange(new Control[] {
-                panelBaslik, lblOdemeSekli, cmbOdemeSekli,
-                lblNakit, txtNakit, lblKredi, txtKrediKarti,
-                lblKalan, lblParaUstu, panelHizli, btnOdemeYap
-            });
+            panel.Controls.Add(lblMalBedeli);
+            panel.Controls.Add(lblIskonto);
+            panel.Controls.Add(lblNet);
+            panel.Controls.Add(lblKdv);
+            panel.Controls.Add(grpOdeme);
+            panel.Controls.Add(lblNakit);
+            panel.Controls.Add(txtNakit);
+            panel.Controls.Add(lblKart);
+            panel.Controls.Add(txtKart);
+            panel.Controls.Add(lblParaUstu);
+            panel.Controls.Add(btnOnay);
 
-            this.Load += (s, e) => { txtNakit.Focus(); txtNakit.SelectAll(); };
+            OdemeTipiDegisti();
+
+            return panel;
         }
 
-        private void CmbOdemeSekli_SelectedIndexChanged(object sender, EventArgs e)
+        private void Hesapla()
         {
-            switch (cmbOdemeSekli.SelectedIndex)
+            toplamBrut = 0m;
+            satirIskontoToplam = 0m;
+
+            foreach (DataRow row in sepet.Rows)
             {
-                case 0: // Nakit
-                    txtNakit.Enabled = true;
-                    txtKrediKarti.Enabled = false;
-                    txtNakit.Text = toplamTutar.ToString("N2");
-                    txtKrediKarti.Text = "0,00";
-                    break;
-                case 1: // Kredi Kartı
-                    txtNakit.Enabled = false;
-                    txtKrediKarti.Enabled = true;
-                    txtNakit.Text = "0,00";
-                    txtKrediKarti.Text = toplamTutar.ToString("N2");
-                    break;
-                case 2: // Karışık
-                    txtNakit.Enabled = true;
-                    txtKrediKarti.Enabled = true;
-                    txtNakit.Text = "0,00";
-                    txtKrediKarti.Text = "0,00";
-                    break;
+                decimal miktar = Convert.ToDecimal(row["lMiktar"]);
+                decimal birimFiyat = Convert.ToDecimal(row["lBirimFiyat"]);
+                decimal iskonto = Convert.ToDecimal(row["nIskontoYuzde"]);
+
+                decimal brut = Yardimcilar.YuvarlaKurus(miktar * birimFiyat);
+                decimal satirIskonto = Yardimcilar.YuvarlaKurus(brut * (iskonto / 100m));
+                decimal satirNet = Yardimcilar.YuvarlaKurus(brut - satirIskonto);
+
+                row["lSatirToplam"] = satirNet;
+                row["lKdvTutar"] = Yardimcilar.KdvTutarHesapla(satirNet, Convert.ToDecimal(row["nKdvOrani"]));
+
+                toplamBrut += brut;
+                satirIskontoToplam += satirIskonto;
             }
+
+            decimal dipIskontoYuzde = ParseDecimal(txtDipIskonto.Text);
+            decimal satirNetToplam = sepet.AsEnumerable().Sum(r => r.Field<decimal>("lSatirToplam"));
+            dipIskontoTutar = dipIskontoYuzde > 0 ? Yardimcilar.YuvarlaKurus(satirNetToplam * (dipIskontoYuzde / 100m)) : 0m;
+            netTutar = Yardimcilar.YuvarlaKurus(satirNetToplam - dipIskontoTutar);
+
+            kdvToplam = 0m;
+            var dagitim = new System.Collections.Generic.Dictionary<decimal, KdvDagitimSonuc>();
+            foreach (DataRow row in sepet.Rows)
+            {
+                decimal satirNet = Convert.ToDecimal(row["lSatirToplam"]);
+                decimal oran = Convert.ToDecimal(row["nKdvOrani"]);
+                decimal pay = satirNetToplam > 0 ? satirNet / satirNetToplam : 0m;
+                decimal dipPay = Yardimcilar.YuvarlaKurus(dipIskontoTutar * pay);
+                decimal satirNetDip = Yardimcilar.YuvarlaKurus(satirNet - dipPay);
+                decimal matrah = Yardimcilar.KdvMatrahHesapla(satirNetDip, oran);
+                decimal kdv = Yardimcilar.KdvTutarHesapla(satirNetDip, oran);
+
+                if (!dagitim.ContainsKey(oran))
+                {
+                    dagitim[oran] = new KdvDagitimSonuc();
+                }
+
+                dagitim[oran].Matrah += matrah;
+                dagitim[oran].Kdv += kdv;
+                kdvToplam += kdv;
+            }
+
+            lblMalBedeli.Text = $"Mal Bedeli: {Yardimcilar.ParaFormatla(toplamBrut)}";
+            lblIskonto.Text = $"İskonto: {Yardimcilar.ParaFormatla(satirIskontoToplam + dipIskontoTutar)}";
+            lblNet.Text = $"Net Tutar: {Yardimcilar.ParaFormatla(netTutar)}";
+            lblKdv.Text = $"KDV: {Yardimcilar.ParaFormatla(kdvToplam)}";
+
+            lvKdvDagitim.Items.Clear();
+            foreach (var item in dagitim.OrderBy(x => x.Key))
+            {
+                var listItem = new ListViewItem($"%{item.Key}");
+                listItem.SubItems.Add(Yardimcilar.ParaFormatla(item.Value.Matrah));
+                listItem.SubItems.Add(Yardimcilar.ParaFormatla(item.Value.Kdv));
+                lvKdvDagitim.Items.Add(listItem);
+            }
+
+            OdemeTipiDegisti();
         }
 
-        private void OdemeTutarDegisti(object sender, EventArgs e)
+        private void OdemeTipiDegisti()
         {
-            decimal.TryParse(txtNakit.Text.Replace(".", "").Replace(",", "."), 
-                System.Globalization.NumberStyles.Any, 
-                System.Globalization.CultureInfo.InvariantCulture, out nakit);
-            decimal.TryParse(txtKrediKarti.Text.Replace(".", "").Replace(",", "."), 
-                System.Globalization.NumberStyles.Any, 
-                System.Globalization.CultureInfo.InvariantCulture, out krediKarti);
-
-            decimal odenen = nakit + krediKarti;
-            decimal kalan = toplamTutar - odenen;
-
-            if (kalan > 0)
+            if (rdoNakit.Checked)
             {
-                lblKalan.Text = $"Kalan: ₺{kalan:N2}";
-                lblKalan.ForeColor = Color.Red;
-                lblParaUstu.Text = "Para Üstü: ₺0,00";
+                txtNakit.Enabled = true;
+                txtKart.Enabled = false;
+                txtNakit.Text = netTutar.ToString("N2");
+                txtKart.Text = "0";
             }
-            else
+            else if (rdoKart.Checked)
             {
-                lblKalan.Text = "Kalan: ₺0,00";
-                lblKalan.ForeColor = Color.FromArgb(0, 122, 204);
-                lblParaUstu.Text = $"Para Üstü: ₺{Math.Abs(kalan):N2}";
+                txtNakit.Enabled = false;
+                txtKart.Enabled = true;
+                txtNakit.Text = "0";
+                txtKart.Text = netTutar.ToString("N2");
             }
+            else if (rdoKarisik.Checked)
+            {
+                txtNakit.Enabled = true;
+                txtKart.Enabled = true;
+                txtNakit.Text = "0";
+                txtKart.Text = "0";
+            }
+            else if (rdoVeresiye.Checked)
+            {
+                txtNakit.Enabled = false;
+                txtKart.Enabled = false;
+                txtNakit.Text = "0";
+                txtKart.Text = "0";
+            }
+
+            ParaUstuHesapla();
         }
 
-        private void BtnOdemeYap_Click(object sender, EventArgs e)
+        private void ParaUstuHesapla()
         {
-            decimal odenen = nakit + krediKarti;
-            if (odenen < toplamTutar)
+            decimal nakit = ParseDecimal(txtNakit.Text);
+            decimal kart = ParseDecimal(txtKart.Text);
+            decimal odenen = nakit + kart;
+            decimal paraUstu = odenen - netTutar;
+
+            lblParaUstu.Text = $"Para Üstü: {Yardimcilar.ParaFormatla(Math.Max(0, paraUstu))}";
+        }
+
+        private void BtnOnay_Click(object sender, EventArgs e)
+        {
+            string odemeTipi = rdoVeresiye.Checked ? "Veresiye"
+                : rdoKarisik.Checked ? "Karışık"
+                : rdoKart.Checked ? "Kredi Kartı"
+                : "Nakit";
+
+            if (rdoVeresiye.Checked && musteriId == 0)
             {
-                MessageBox.Show("Ödeme tutarı yetersiz!", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Veresiye için müşteri seçmelisiniz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            decimal nakit = ParseDecimal(txtNakit.Text);
+            decimal kart = ParseDecimal(txtKart.Text);
+
+            if (!rdoVeresiye.Checked && nakit + kart < netTutar)
+            {
+                MessageBox.Show("Ödeme tutarı yetersiz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (MessageBox.Show("Ödeme onaylansın mı?", "Onay", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            {
                 return;
             }
 
             try
             {
-                using (SqlConnection conn = new SqlConnection(Ayarlar.ConnectionString))
-                {
-                    conn.Open();
-                    using (SqlTransaction trans = conn.BeginTransaction())
-                    {
-                        try
-                        {
-                            // Yeni fiş numarası al
-                            string yeniFisNo = DateTime.Now.ToString("yyyyMMddHHmmss");
-                            
-                            // Satış kaydı oluştur (tbAlisVeris)
-                            string sqlSatis = @"
-                                INSERT INTO tbAlisVeris (nAlisverisID, sFisTipi, dteFaturaTarihi, nGirisCikis, 
-                                    nMusteriID, lMalBedeli, lNetTutar, lPesinat, sKullaniciAdi, dteKayitTarihi, sMagaza)
-                                VALUES (@fisNo, 'PS', @tarih, 2, @musteriId, @tutar, @tutar, @pesinat, @kullanici, GETDATE(), '001')";
-
-                            using (SqlCommand cmd = new SqlCommand(sqlSatis, conn, trans))
-                            {
-                                cmd.Parameters.AddWithValue("@fisNo", yeniFisNo);
-                                cmd.Parameters.AddWithValue("@tarih", DateTime.Now);
-                                cmd.Parameters.AddWithValue("@musteriId", musteriId == 0 ? DBNull.Value : (object)musteriId);
-                                cmd.Parameters.AddWithValue("@tutar", toplamTutar);
-                                cmd.Parameters.AddWithValue("@pesinat", odenen);
-                                cmd.Parameters.AddWithValue("@kullanici", Environment.UserName);
-                                cmd.ExecuteNonQuery();
-                            }
-
-                            // Satış detayları (tbAlisverisSiparis)
-                            int siraNo = 1;
-                            foreach (DataRow row in sepet.Rows)
-                            {
-                                string sqlDetay = @"
-                                    INSERT INTO tbAlisverisSiparis (nAlisverisID, nSiparisID, nStokID, lMiktar, lBirimFiyat, lTutar)
-                                    VALUES (@fisNo, @siraNo, @stokId, @miktar, @birimFiyat, @tutar)";
-
-                                using (SqlCommand cmd = new SqlCommand(sqlDetay, conn, trans))
-                                {
-                                    cmd.Parameters.AddWithValue("@fisNo", yeniFisNo);
-                                    cmd.Parameters.AddWithValue("@siraNo", siraNo++);
-                                    cmd.Parameters.AddWithValue("@stokId", row["StokID"]);
-                                    cmd.Parameters.AddWithValue("@miktar", row["Miktar"]);
-                                    cmd.Parameters.AddWithValue("@birimFiyat", row["BirimFiyat"]);
-                                    cmd.Parameters.AddWithValue("@tutar", row["Tutar"]);
-                                    cmd.ExecuteNonQuery();
-                                }
-                            }
-
-                            // Ödeme kaydı (tbOdeme)
-                            if (nakit > 0)
-                            {
-                                KaydetOdeme(conn, trans, yeniFisNo, "N", nakit);
-                            }
-                            if (krediKarti > 0)
-                            {
-                                KaydetOdeme(conn, trans, yeniFisNo, "KK", krediKarti);
-                            }
-
-                            trans.Commit();
-
-                            decimal paraUstu = odenen - toplamTutar;
-                            string mesaj = $"✓ Satış başarıyla tamamlandı!\n\nFiş No: {yeniFisNo}";
-                            if (paraUstu > 0 && nakit > 0)
-                            {
-                                mesaj += $"\n\n💵 Para Üstü: ₺{paraUstu:N2}";
-                            }
-
-                            MessageBox.Show(mesaj, "Başarılı", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                            this.DialogResult = DialogResult.OK;
-                            this.Close();
-                        }
-                        catch
-                        {
-                            trans.Rollback();
-                            throw;
-                        }
-                    }
-                }
+                decimal dipYuzde = ParseDecimal(txtDipIskonto.Text);
+                int satisId = VeriKatmani.SatisKaydet(sepet, musteriId, odemeTipi, nakit, kart, dipYuzde);
+                MessageBox.Show($"Satış kaydedildi. (ID: {satisId})", "Başarılı", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                DialogResult = DialogResult.OK;
+                Close();
             }
             catch (Exception ex)
             {
@@ -333,17 +422,19 @@ namespace MarketYonetim
             }
         }
 
-        private void KaydetOdeme(SqlConnection conn, SqlTransaction trans, string fisNo, string odemeTipi, decimal tutar)
+        private static decimal ParseDecimal(string text)
         {
-            string sql = @"INSERT INTO tbOdeme (nAlisverisID, sOdemeSekli, lTutar, dteKayitTarihi) 
-                           VALUES (@fisNo, @odemeTipi, @tutar, GETDATE())";
-            using (SqlCommand cmd = new SqlCommand(sql, conn, trans))
+            if (decimal.TryParse(text, NumberStyles.Any, CultureInfo.GetCultureInfo("tr-TR"), out var value))
             {
-                cmd.Parameters.AddWithValue("@fisNo", fisNo);
-                cmd.Parameters.AddWithValue("@odemeTipi", odemeTipi);
-                cmd.Parameters.AddWithValue("@tutar", tutar);
-                cmd.ExecuteNonQuery();
+                return value;
             }
+
+            if (decimal.TryParse(text.Replace(".", ","), NumberStyles.Any, CultureInfo.GetCultureInfo("tr-TR"), out value))
+            {
+                return value;
+            }
+
+            return 0m;
         }
     }
 }

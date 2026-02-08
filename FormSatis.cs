@@ -1,364 +1,439 @@
 using System;
 using System.Data;
-using System.Data.SqlClient;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace MarketYonetim
 {
     public partial class FormSatis : Form
     {
-        private DataTable sepet;
-        private decimal toplamTutar = 0;
-        private int musteriId = 0;
+        private readonly DataTable sepet = new DataTable();
+        private readonly Timer aramaTimer = new Timer();
+        private readonly Timer saatTimer = new Timer();
+        private int musteriId;
 
-        // UI Bileşenleri
         private TextBox txtBarkod;
         private TextBox txtArama;
+        private ListBox lstAramaSonuc;
         private DataGridView dgvSepet;
         private Label lblToplam;
-        private Label lblMusteriAdi;
-        private Label lblUrunSayisi;
-        private Button btnOdemeAl;
+        private Label lblKdv;
+        private Label lblGenelToplam;
+        private Label lblGunlukOzet;
+        private Label lblSaat;
+        private Label lblSonUrun;
+        private Label lblMusteri;
+        private Button btnOdeme;
         private Button btnSepetTemizle;
-        private Button btnUrunSil;
-        private Button btnMusteriSec;
-        private Button btnUrunler;
-        private Button btnRaporlar;
-        private Button btnAyarlar;
-        private NumericUpDown nudMiktar;
-        private ListBox lstAramaSonuc;
 
         public FormSatis()
         {
             InitializeComponent();
-            SepetOlustur();
-            this.KeyPreview = true;
+            SepetHazirla();
+            KeyPreview = true;
         }
 
         private void InitializeComponent()
         {
-            this.Text = "KARAKAŞ MARKET - Satış Ekranı";
-            this.Size = new Size(1366, 768);
-            this.StartPosition = FormStartPosition.CenterScreen;
-            this.BackColor = Color.FromArgb(240, 240, 240);
-            this.Font = new Font("Segoe UI", 10);
-            this.WindowState = FormWindowState.Maximized;
+            AutoScaleMode = AutoScaleMode.Dpi;
+            Font = new Font("Segoe UI", 10);
+            Text = "🛒 Satış";
+            WindowState = FormWindowState.Maximized;
+            BackColor = Color.White;
 
-            // ÜST PANEL
-            Panel panelUst = new Panel
+            var layout = new TableLayoutPanel
             {
-                Dock = DockStyle.Top,
-                Height = 70,
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3
+            };
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
+
+            layout.Controls.Add(OlusturUstPanel(), 0, 0);
+            layout.Controls.Add(OlusturOrtaPanel(), 0, 1);
+            layout.Controls.Add(OlusturAltPanel(), 0, 2);
+
+            Controls.Add(layout);
+
+            aramaTimer.Interval = 300;
+            aramaTimer.Tick += AramaTimer_Tick;
+
+            saatTimer.Interval = 1000;
+            saatTimer.Tick += SaatTimer_Tick;
+            saatTimer.Start();
+
+            Load += FormSatis_Load;
+            KeyDown += FormSatis_KeyDown;
+        }
+
+        private Control OlusturUstPanel()
+        {
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill,
                 BackColor = Color.FromArgb(0, 122, 204)
             };
 
-            Label lblBaslik = new Label
+            var lblBaslik = new Label
             {
-                Text = "🛒 KARAKAŞ MARKET",
-                Font = new Font("Segoe UI", 22, FontStyle.Bold),
+                Text = "🛒 Satış",
                 ForeColor = Color.White,
+                Font = new Font("Segoe UI", 20, FontStyle.Bold),
                 AutoSize = true,
-                Location = new Point(20, 18)
+                Location = new Point(20, 25)
             };
 
-            Label lblTarih = new Label
+            lblGunlukOzet = new Label
             {
-                Text = DateTime.Now.ToString("dd MMMM yyyy dddd - HH:mm"),
+                Text = "Bugün: ₺0,00 (0 satış)",
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(220, 32)
+            };
+
+            lblSaat = new Label
+            {
+                Text = DateTime.Now.ToString("dd.MM.yyyy HH:mm"),
+                ForeColor = Color.White,
                 Font = new Font("Segoe UI", 11),
-                ForeColor = Color.White,
                 AutoSize = true,
-                Location = new Point(350, 25)
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Location = new Point(0, 35)
+            };
+            lblSaat.Left = panel.Width - lblSaat.Width - 20;
+            lblSaat.Top = 35;
+            lblSaat.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+
+            panel.Controls.Add(lblBaslik);
+            panel.Controls.Add(lblGunlukOzet);
+            panel.Controls.Add(lblSaat);
+            panel.Resize += (_, __) =>
+            {
+                lblSaat.Left = panel.Width - lblSaat.Width - 20;
             };
 
-            btnUrunler = CreateMenuButton("📦 Ürünler", 650);
-            btnUrunler.Click += BtnUrunler_Click;
+            return panel;
+        }
 
-            btnRaporlar = CreateMenuButton("📊 Raporlar", 780);
-            btnRaporlar.Click += BtnRaporlar_Click;
-
-            btnAyarlar = CreateMenuButton("⚙️ Ayarlar", 910);
-            btnAyarlar.Click += BtnAyarlar_Click;
-
-            panelUst.Controls.AddRange(new Control[] { lblBaslik, lblTarih, btnUrunler, btnRaporlar, btnAyarlar });
-
-            // SOL PANEL
-            Panel panelSol = new Panel
+        private Control OlusturOrtaPanel()
+        {
+            var panel = new TableLayoutPanel
             {
-                Dock = DockStyle.Left,
-                Width = 380,
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1
+            };
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 72));
+            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 28));
+
+            panel.Controls.Add(OlusturSepetPanel(), 0, 0);
+            panel.Controls.Add(OlusturSagPanel(), 1, 0);
+
+            return panel;
+        }
+
+        private Control OlusturSepetPanel()
+        {
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(10)
+            };
+
+            dgvSepet = new DataGridView
+            {
+                Dock = DockStyle.Fill,
+                BackgroundColor = Color.White,
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                AutoGenerateColumns = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
+                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+                RowHeadersVisible = false
+            };
+
+            typeof(DataGridView).InvokeMember("DoubleBuffered",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.SetProperty,
+                null, dgvSepet, new object[] { true });
+
+            dgvSepet.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(0, 122, 204);
+            dgvSepet.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
+            dgvSepet.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 10, FontStyle.Bold);
+            dgvSepet.ColumnHeadersHeight = 36;
+            dgvSepet.EnableHeadersVisualStyles = false;
+            dgvSepet.CellEndEdit += DgvSepet_CellEndEdit;
+            dgvSepet.UserDeletingRow += (_, __) => ToplamlariHesapla();
+
+            panel.Controls.Add(dgvSepet);
+
+            return panel;
+        }
+
+        private Control OlusturSagPanel()
+        {
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill,
                 BackColor = Color.White,
-                Padding = new Padding(15)
+                Padding = new Padding(12)
             };
 
-            Label lblBarkod = new Label
+            var lblBarkod = new Label
             {
-                Text = "📷 Barkod Okut / Gir:",
-                Font = new Font("Segoe UI", 11, FontStyle.Bold),
-                Location = new Point(15, 15),
-                AutoSize = true
+                Text = "Barkod",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(0, 0)
             };
 
             txtBarkod = new TextBox
             {
-                Font = new Font("Segoe UI", 16),
-                Location = new Point(15, 45),
-                Size = new Size(340, 40)
+                Font = new Font("Segoe UI", 14),
+                Width = 250,
+                Location = new Point(0, 25)
             };
             txtBarkod.KeyDown += TxtBarkod_KeyDown;
 
-            Label lblMiktar = new Label
+            var lblArama = new Label
             {
-                Text = "Miktar:",
-                Font = new Font("Segoe UI", 11, FontStyle.Bold),
-                Location = new Point(15, 95),
-                AutoSize = true
-            };
-
-            nudMiktar = new NumericUpDown
-            {
-                Font = new Font("Segoe UI", 14),
-                Location = new Point(15, 125),
-                Size = new Size(120, 35),
-                Minimum = 0.001m,
-                Maximum = 9999,
-                Value = 1,
-                DecimalPlaces = 3
-            };
-
-            Label lblArama = new Label
-            {
-                Text = "🔍 Ürün Ara:",
-                Font = new Font("Segoe UI", 11, FontStyle.Bold),
-                Location = new Point(15, 175),
-                AutoSize = true
+                Text = "Arama",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(0, 70)
             };
 
             txtArama = new TextBox
             {
                 Font = new Font("Segoe UI", 12),
-                Location = new Point(15, 205),
-                Size = new Size(340, 30)
+                Width = 250,
+                Location = new Point(0, 95)
             };
             txtArama.TextChanged += TxtArama_TextChanged;
 
             lstAramaSonuc = new ListBox
             {
                 Font = new Font("Segoe UI", 10),
-                Location = new Point(15, 240),
-                Size = new Size(340, 220),
+                Width = 250,
+                Height = 200,
+                Location = new Point(0, 130),
                 Visible = false
             };
             lstAramaSonuc.DoubleClick += LstAramaSonuc_DoubleClick;
 
-            GroupBox grpMusteri = new GroupBox
+            lblSonUrun = new Label
             {
-                Text = "👤 Müşteri",
+                Text = "Son ürün: -",
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                Location = new Point(15, 470),
-                Size = new Size(340, 120)
+                AutoSize = false,
+                Width = 250,
+                Height = 60,
+                Location = new Point(0, 350)
             };
 
-            lblMusteriAdi = new Label
+            lblMusteri = new Label
             {
-                Text = "Peşin Satış",
-                Font = new Font("Segoe UI", 14),
-                ForeColor = Color.FromArgb(0, 122, 204),
-                Location = new Point(10, 30),
-                Size = new Size(320, 30)
+                Text = "Müşteri: Peşin",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(0, 420)
             };
 
-            btnMusteriSec = new Button
+            var btnMusteri = new Button
             {
                 Text = "Müşteri Seç (F5)",
-                Font = new Font("Segoe UI", 10),
-                Location = new Point(10, 70),
-                Size = new Size(150, 35),
                 BackColor = Color.FromArgb(0, 122, 204),
                 ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
+                FlatStyle = FlatStyle.Flat,
+                Width = 250,
+                Height = 40,
+                Location = new Point(0, 450)
             };
-            btnMusteriSec.Click += BtnMusteriSec_Click;
+            btnMusteri.Click += BtnMusteri_Click;
 
-            Button btnMusteriTemizle = new Button
-            {
-                Text = "Temizle",
-                Font = new Font("Segoe UI", 10),
-                Location = new Point(170, 70),
-                Size = new Size(90, 35),
-                BackColor = Color.Gray,
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
-            };
-            btnMusteriTemizle.Click += (s, e) => { musteriId = 0; lblMusteriAdi.Text = "Peşin Satış"; };
+            panel.Controls.Add(lblBarkod);
+            panel.Controls.Add(txtBarkod);
+            panel.Controls.Add(lblArama);
+            panel.Controls.Add(txtArama);
+            panel.Controls.Add(lstAramaSonuc);
+            panel.Controls.Add(lblSonUrun);
+            panel.Controls.Add(lblMusteri);
+            panel.Controls.Add(btnMusteri);
 
-            grpMusteri.Controls.AddRange(new Control[] { lblMusteriAdi, btnMusteriSec, btnMusteriTemizle });
+            return panel;
+        }
 
-            panelSol.Controls.AddRange(new Control[] { 
-                lblBarkod, txtBarkod, lblMiktar, nudMiktar, 
-                lblArama, txtArama, lstAramaSonuc, grpMusteri 
-            });
-
-            // SAĞ PANEL
-            Panel panelSag = new Panel
+        private Control OlusturAltPanel()
+        {
+            var panel = new Panel
             {
                 Dock = DockStyle.Fill,
-                BackColor = Color.White,
-                Padding = new Padding(15)
-            };
-
-            Label lblSepet = new Label
-            {
-                Text = "🛒 SEPET",
-                Font = new Font("Segoe UI", 16, FontStyle.Bold),
-                ForeColor = Color.FromArgb(0, 122, 204),
-                Location = new Point(15, 10),
-                AutoSize = true
-            };
-
-            lblUrunSayisi = new Label
-            {
-                Text = "(0 ürün)",
-                Font = new Font("Segoe UI", 11),
-                ForeColor = Color.Gray,
-                Location = new Point(120, 15),
-                AutoSize = true
-            };
-
-            dgvSepet = new DataGridView
-            {
-                Location = new Point(15, 45),
-                Size = new Size(900, 450),
-                Font = new Font("Segoe UI", 11),
-                BackgroundColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle,
-                AllowUserToAddRows = false,
-                AllowUserToDeleteRows = false,
-                ReadOnly = true,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                RowHeadersVisible = false,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
-            };
-            dgvSepet.DefaultCellStyle.SelectionBackColor = Color.FromArgb(0, 122, 204);
-            dgvSepet.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(0, 122, 204);
-            dgvSepet.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
-            dgvSepet.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 11, FontStyle.Bold);
-            dgvSepet.ColumnHeadersHeight = 40;
-            dgvSepet.RowTemplate.Height = 35;
-            dgvSepet.EnableHeadersVisualStyles = false;
-
-            panelSag.Controls.AddRange(new Control[] { lblSepet, lblUrunSayisi, dgvSepet });
-
-            // ALT PANEL
-            Panel panelAlt = new Panel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 130,
                 BackColor = Color.FromArgb(45, 45, 48)
             };
 
             lblToplam = new Label
             {
-                Text = "TOPLAM: ₺0,00",
-                Font = new Font("Segoe UI", 32, FontStyle.Bold),
-                ForeColor = Color.FromArgb(0, 200, 83),
-                Location = new Point(30, 35),
-                AutoSize = true
+                Text = "Toplam: ₺0,00",
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(20, 20)
             };
 
-            btnUrunSil = new Button
+            lblKdv = new Label
             {
-                Text = "🗑️ Sil (DEL)",
-                Font = new Font("Segoe UI", 12, FontStyle.Bold),
-                Size = new Size(140, 55),
-                Location = new Point(550, 38),
-                BackColor = Color.FromArgb(200, 50, 50),
+                Text = "KDV: ₺0,00",
                 ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(20, 50)
             };
-            btnUrunSil.Click += BtnUrunSil_Click;
+
+            lblGenelToplam = new Label
+            {
+                Text = "Genel Toplam: ₺0,00",
+                ForeColor = Color.FromArgb(0, 200, 83),
+                Font = new Font("Segoe UI", 16, FontStyle.Bold),
+                AutoSize = true,
+                Location = new Point(20, 80)
+            };
 
             btnSepetTemizle = new Button
             {
-                Text = "🔄 Temizle",
-                Font = new Font("Segoe UI", 12, FontStyle.Bold),
-                Size = new Size(140, 55),
-                Location = new Point(710, 38),
-                BackColor = Color.FromArgb(255, 152, 0),
+                Text = "Sepeti Temizle (F9)",
+                BackColor = Color.FromArgb(255, 23, 68),
                 ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
+                FlatStyle = FlatStyle.Flat,
+                Width = 200,
+                Height = 45,
+                Location = new Point(600, 35)
             };
             btnSepetTemizle.Click += BtnSepetTemizle_Click;
 
-            btnOdemeAl = new Button
+            btnOdeme = new Button
             {
-                Text = "💰 ÖDEME AL (F12)",
-                Font = new Font("Segoe UI", 16, FontStyle.Bold),
-                Size = new Size(280, 70),
-                Location = new Point(900, 30),
+                Text = "💰 Ödeme (F12)",
                 BackColor = Color.FromArgb(0, 200, 83),
                 ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
-            };
-            btnOdemeAl.Click += BtnOdemeAl_Click;
-
-            panelAlt.Controls.AddRange(new Control[] { lblToplam, btnUrunSil, btnSepetTemizle, btnOdemeAl });
-
-            this.Controls.Add(panelSag);
-            this.Controls.Add(panelSol);
-            this.Controls.Add(panelAlt);
-            this.Controls.Add(panelUst);
-
-            this.KeyDown += FormSatis_KeyDown;
-            this.Load += (s, e) => txtBarkod.Focus();
-        }
-
-        private Button CreateMenuButton(string text, int x)
-        {
-            return new Button
-            {
-                Text = text,
-                Font = new Font("Segoe UI", 11),
-                Location = new Point(x, 17),
-                Size = new Size(120, 38),
-                BackColor = Color.Transparent,
-                ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 0 }
+                Width = 220,
+                Height = 55,
+                Location = new Point(820, 30)
             };
+            btnOdeme.Click += BtnOdeme_Click;
+
+            panel.Controls.Add(lblToplam);
+            panel.Controls.Add(lblKdv);
+            panel.Controls.Add(lblGenelToplam);
+            panel.Controls.Add(btnSepetTemizle);
+            panel.Controls.Add(btnOdeme);
+
+            return panel;
         }
 
-        private void SepetOlustur()
+        private void SepetHazirla()
         {
-            sepet = new DataTable();
-            sepet.Columns.Add("StokID", typeof(int));
-            sepet.Columns.Add("Barkod", typeof(string));
-            sepet.Columns.Add("UrunAdi", typeof(string));
-            sepet.Columns.Add("Miktar", typeof(decimal));
-            sepet.Columns.Add("BirimFiyat", typeof(decimal));
-            sepet.Columns.Add("Tutar", typeof(decimal));
-            sepet.Columns.Add("KdvOrani", typeof(decimal));
+            sepet.Columns.Add("nStokID", typeof(int));
+            sepet.Columns.Add("sBarkod", typeof(string));
+            sepet.Columns.Add("sAciklama", typeof(string));
+            sepet.Columns.Add("sBirimCinsi", typeof(string));
+            sepet.Columns.Add("lMiktar", typeof(decimal));
+            sepet.Columns.Add("lBirimFiyat", typeof(decimal));
+            sepet.Columns.Add("nIskontoYuzde", typeof(decimal));
+            sepet.Columns.Add("lSatirToplam", typeof(decimal));
+            sepet.Columns.Add("nKdvOrani", typeof(decimal));
+            sepet.Columns.Add("lKdvTutar", typeof(decimal));
 
-            dgvSepet.AutoGenerateColumns = true;
             dgvSepet.DataSource = sepet;
+            dgvSepet.Columns.Clear();
 
-            if (dgvSepet.Columns.Count == 0) return;
+            dgvSepet.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                HeaderText = "Sıra",
+                Width = 50,
+                ReadOnly = true
+            });
+            dgvSepet.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "sBarkod",
+                HeaderText = "Barkod",
+                Width = 120,
+                ReadOnly = true
+            });
+            dgvSepet.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "sAciklama",
+                HeaderText = "Ürün Adı",
+                Width = 240,
+                ReadOnly = true
+            });
+            dgvSepet.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "lMiktar",
+                HeaderText = "Miktar",
+                Width = 80
+            });
+            dgvSepet.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "lBirimFiyat",
+                HeaderText = "Birim Fiyat",
+                Width = 110
+            });
+            dgvSepet.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "nIskontoYuzde",
+                HeaderText = "İskonto%",
+                Width = 90
+            });
+            dgvSepet.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "lSatirToplam",
+                HeaderText = "Satır Toplamı",
+                Width = 120,
+                ReadOnly = true
+            });
+            dgvSepet.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "nKdvOrani",
+                HeaderText = "KDV%",
+                Width = 70,
+                ReadOnly = true
+            });
 
-            dgvSepet.Columns["StokID"].Visible = false;
-            dgvSepet.Columns["KdvOrani"].Visible = false;
-            dgvSepet.Columns["Barkod"].HeaderText = "Barkod";
-            dgvSepet.Columns["Barkod"].Width = 130;
-            dgvSepet.Columns["UrunAdi"].HeaderText = "Ürün Adı";
-            dgvSepet.Columns["Miktar"].HeaderText = "Miktar";
-            dgvSepet.Columns["Miktar"].Width = 80;
-            dgvSepet.Columns["BirimFiyat"].HeaderText = "Birim Fiyat";
-            dgvSepet.Columns["BirimFiyat"].Width = 100;
-            dgvSepet.Columns["Tutar"].HeaderText = "Tutar";
-            dgvSepet.Columns["Tutar"].Width = 100;
-            dgvSepet.Columns["BirimFiyat"].DefaultCellStyle.Format = "₺#,##0.00";
-            dgvSepet.Columns["Tutar"].DefaultCellStyle.Format = "₺#,##0.00";
-            dgvSepet.Columns["Miktar"].DefaultCellStyle.Format = "#,##0.###";
+            dgvSepet.CellFormatting += DgvSepet_CellFormatting;
+        }
+
+        private void FormSatis_Load(object sender, EventArgs e)
+        {
+            txtBarkod.Focus();
+            GunlukOzetYukle();
+        }
+
+        private void SaatTimer_Tick(object sender, EventArgs e)
+        {
+            lblSaat.Text = DateTime.Now.ToString("dd.MM.yyyy HH:mm");
+        }
+
+        private void GunlukOzetYukle()
+        {
+            try
+            {
+                DataTable ozet = VeriKatmani.GunSatisOzeti();
+                if (ozet.Rows.Count > 0)
+                {
+                    decimal toplam = Convert.ToDecimal(ozet.Rows[0]["ToplamTutar"]);
+                    int adet = Convert.ToInt32(ozet.Rows[0]["SatisAdedi"]);
+                    lblGunlukOzet.Text = $"Bugün: {Yardimcilar.ParaFormatla(toplam)} ({adet} satış)";
+                }
+            }
+            catch
+            {
+                lblGunlukOzet.Text = "Bugün: ₺0,00 (0 satış)";
+            }
         }
 
         private void TxtBarkod_KeyDown(object sender, KeyEventArgs e)
@@ -366,308 +441,263 @@ namespace MarketYonetim
             if (e.KeyCode == Keys.Enter)
             {
                 string barkod = txtBarkod.Text.Trim();
-                if (!string.IsNullOrEmpty(barkod))
+                if (!string.IsNullOrWhiteSpace(barkod))
                 {
-                    UrunEkle(barkod);
-                    txtBarkod.Clear();
+                    BarkodIleEkle(barkod);
                 }
+                txtBarkod.Clear();
                 e.Handled = true;
                 e.SuppressKeyPress = true;
             }
         }
 
-        private void UrunEkle(string barkod)
-        {
-            try
-            {
-                using (SqlConnection conn = new SqlConnection(Ayarlar.ConnectionString))
-                {
-                    conn.Open();
-                    
-                    string sql = @"
-                        SELECT TOP 1 s.nStokID, ISNULL(b.sBarkod, s.sKodu) as Barkod, s.sAciklama, 
-                               ISNULL(f.lFiyat, 0) as SatisFiyat, 
-                               ISNULL(k.nKdvOrani, 18) as KdvOrani
-                        FROM tbStok s
-                        LEFT JOIN tbStokBarkodu b ON s.nStokID = b.nStokId
-                        LEFT JOIN tbStokFiyati f ON s.nStokID = f.nStokID AND f.sFiyatTipi = '1'
-                        LEFT JOIN tbKdv k ON s.sKdvTipi = k.sKdvTipi
-                        WHERE b.sBarkod = @barkod OR s.sKodu = @barkod
-                        ORDER BY f.lFiyat DESC";
-
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@barkod", barkod);
-                        using (SqlDataReader reader = cmd.ExecuteReader())
-                        {
-                            if (reader.Read())
-                            {
-                                int stokId = reader.GetInt32(0);
-                                string urunBarkod = reader.IsDBNull(1) ? barkod : reader.GetString(1).Trim();
-                                string urunAdi = reader.IsDBNull(2) ? "" : reader.GetString(2).Trim();
-                                decimal fiyat = reader.IsDBNull(3) ? 0 : reader.GetDecimal(3);
-                                decimal kdv = reader.IsDBNull(4) ? 18 : reader.GetDecimal(4);
-                                decimal miktar = nudMiktar.Value;
-
-                                if (fiyat == 0)
-                                {
-                                    MessageBox.Show($"'{urunAdi}' ürününün satış fiyatı tanımlı değil!", "Uyarı", 
-                                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                                    return;
-                                }
-
-                                DataRow[] mevcutUrun = sepet.Select($"StokID = {stokId}");
-                                if (mevcutUrun.Length > 0)
-                                {
-                                    decimal yeniMiktar = (decimal)mevcutUrun[0]["Miktar"] + miktar;
-                                    mevcutUrun[0]["Miktar"] = yeniMiktar;
-                                    mevcutUrun[0]["Tutar"] = yeniMiktar * fiyat;
-                                }
-                                else
-                                {
-                                    sepet.Rows.Add(stokId, urunBarkod, urunAdi, miktar, fiyat, miktar * fiyat, kdv);
-                                }
-
-                                ToplamHesapla();
-                                nudMiktar.Value = 1;
-                            }
-                            else
-                            {
-                                MessageBox.Show($"'{barkod}' barkodlu ürün bulunamadı!", "Uyarı", 
-                                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Hata: {ex.Message}", "Veritabanı Hatası", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
-
         private void TxtArama_TextChanged(object sender, EventArgs e)
         {
-            string arama = txtArama.Text.Trim();
+            aramaTimer.Stop();
+            aramaTimer.Start();
+        }
 
+        private void AramaTimer_Tick(object sender, EventArgs e)
+        {
+            aramaTimer.Stop();
+            string arama = txtArama.Text.Trim();
             if (arama.Length < 2)
             {
+                lstAramaSonuc.DataSource = null;
                 lstAramaSonuc.Visible = false;
                 return;
             }
 
             try
             {
-                using (SqlConnection conn = new SqlConnection(Ayarlar.ConnectionString))
-                {
-                    conn.Open();
-                    string sql = @"
-                        SELECT TOP 20 s.nStokID, s.sKodu, s.sAciklama, ISNULL(f.lFiyat, 0) as Fiyat
-                        FROM tbStok s
-                        LEFT JOIN tbStokFiyati f ON s.nStokID = f.nStokID AND f.sFiyatTipi = '1'
-                        WHERE s.sAciklama LIKE @arama OR s.sKodu LIKE @arama OR s.sKisaAdi LIKE @arama
-                        ORDER BY s.sAciklama";
-
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@arama", $"%{arama}%");
-                        lstAramaSonuc.Items.Clear();
-                        lstAramaSonuc.Tag = new System.Collections.Generic.Dictionary<int, int>();
-
-                        using (SqlDataReader reader = cmd.ExecuteReader())
-                        {
-                            int idx = 0;
-                            while (reader.Read())
-                            {
-                                int stokId = reader.GetInt32(0);
-                                string ad = reader.GetString(2).Trim();
-                                decimal fiyat = reader.GetDecimal(3);
-                                lstAramaSonuc.Items.Add($"{ad} - ₺{fiyat:N2}");
-                                ((System.Collections.Generic.Dictionary<int, int>)lstAramaSonuc.Tag)[idx++] = stokId;
-                            }
-                        }
-
-                        lstAramaSonuc.Visible = lstAramaSonuc.Items.Count > 0;
-                    }
-                }
+                DataTable sonuc = VeriKatmani.UrunAra(arama);
+                lstAramaSonuc.DataSource = sonuc;
+                lstAramaSonuc.DisplayMember = "sAciklama";
+                lstAramaSonuc.ValueMember = "nStokID";
+                lstAramaSonuc.Visible = sonuc.Rows.Count > 0;
             }
-            catch { }
+            catch
+            {
+                lstAramaSonuc.DataSource = null;
+                lstAramaSonuc.Visible = false;
+            }
         }
 
         private void LstAramaSonuc_DoubleClick(object sender, EventArgs e)
         {
-            if (lstAramaSonuc.SelectedIndex >= 0)
+            if (lstAramaSonuc.SelectedItem is DataRowView rowView)
             {
-                var dict = lstAramaSonuc.Tag as System.Collections.Generic.Dictionary<int, int>;
-                if (dict != null && dict.ContainsKey(lstAramaSonuc.SelectedIndex))
-                {
-                    UrunEkleById(dict[lstAramaSonuc.SelectedIndex]);
-                    lstAramaSonuc.Visible = false;
-                    txtArama.Clear();
-                }
+                UrunEkle(rowView.Row);
+                txtArama.Clear();
+                lstAramaSonuc.Visible = false;
             }
         }
 
-        private void UrunEkleById(int stokId)
+        private void BarkodIleEkle(string barkod)
         {
             try
             {
-                using (SqlConnection conn = new SqlConnection(Ayarlar.ConnectionString))
+                DataTable sonuc = VeriKatmani.BarkodIleUrunBul(barkod);
+                if (sonuc.Rows.Count == 0)
                 {
-                    conn.Open();
-                    string sql = @"
-                        SELECT s.nStokID, ISNULL(b.sBarkod, s.sKodu) as Barkod, s.sAciklama,
-                               ISNULL(f.lFiyat, 0) as SatisFiyat, ISNULL(k.nKdvOrani, 18) as KdvOrani
-                        FROM tbStok s
-                        LEFT JOIN tbStokBarkodu b ON s.nStokID = b.nStokId
-                        LEFT JOIN tbStokFiyati f ON s.nStokID = f.nStokID AND f.sFiyatTipi = '1'
-                        LEFT JOIN tbKdv k ON s.sKdvTipi = k.sKdvTipi
-                        WHERE s.nStokID = @stokId";
-
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@stokId", stokId);
-                        using (SqlDataReader reader = cmd.ExecuteReader())
-                        {
-                            if (reader.Read())
-                            {
-                                string barkod = reader.GetString(1).Trim();
-                                string urunAdi = reader.GetString(2).Trim();
-                                decimal fiyat = reader.GetDecimal(3);
-                                decimal kdv = reader.GetDecimal(4);
-                                decimal miktar = nudMiktar.Value;
-
-                                if (fiyat == 0)
-                                {
-                                    MessageBox.Show($"'{urunAdi}' ürününün satış fiyatı tanımlı değil!", "Uyarı", 
-                                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                                    return;
-                                }
-
-                                DataRow[] mevcutUrun = sepet.Select($"StokID = {stokId}");
-                                if (mevcutUrun.Length > 0)
-                                {
-                                    decimal yeniMiktar = (decimal)mevcutUrun[0]["Miktar"] + miktar;
-                                    mevcutUrun[0]["Miktar"] = yeniMiktar;
-                                    mevcutUrun[0]["Tutar"] = yeniMiktar * fiyat;
-                                }
-                                else
-                                {
-                                    sepet.Rows.Add(stokId, barkod, urunAdi, miktar, fiyat, miktar * fiyat, kdv);
-                                }
-
-                                ToplamHesapla();
-                                nudMiktar.Value = 1;
-                            }
-                        }
-                    }
+                    MessageBox.Show("Ürün bulunamadı.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
                 }
+
+                UrunEkle(sonuc.Rows[0]);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Hata: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Ürün eklenemedi: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        private void ToplamHesapla()
+        private void UrunEkle(DataRow urun)
         {
-            toplamTutar = 0;
+            int stokId = Convert.ToInt32(urun["nStokID"]);
+            string barkod = urun["sBarkod"].ToString().Trim();
+            string aciklama = urun["sAciklama"].ToString().Trim();
+            string birim = urun["sBirimCinsi"].ToString().Trim();
+            decimal fiyat = Convert.ToDecimal(urun["lFiyat"]);
+            decimal kdv = Convert.ToDecimal(urun["nKdvOrani"]);
+
+            if (fiyat <= 0)
+            {
+                MessageBox.Show("Ürün fiyatı tanımlı değil.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            DataRow mevcut = sepet.AsEnumerable().FirstOrDefault(row => row.Field<int>("nStokID") == stokId);
+            if (mevcut == null)
+            {
+                DataRow yeni = sepet.NewRow();
+                yeni["nStokID"] = stokId;
+                yeni["sBarkod"] = barkod;
+                yeni["sAciklama"] = aciklama;
+                yeni["sBirimCinsi"] = birim;
+                yeni["lMiktar"] = 1m;
+                yeni["lBirimFiyat"] = fiyat;
+                yeni["nIskontoYuzde"] = 0m;
+                yeni["nKdvOrani"] = kdv;
+                yeni["lSatirToplam"] = 0m;
+                yeni["lKdvTutar"] = 0m;
+                sepet.Rows.Add(yeni);
+                mevcut = yeni;
+            }
+            else
+            {
+                mevcut["lMiktar"] = Convert.ToDecimal(mevcut["lMiktar"]) + 1m;
+            }
+
+            SatirHesapla(mevcut);
+            lblSonUrun.Text = $"Son ürün: {aciklama}";
+            ToplamlariHesapla();
+        }
+
+        private void SatirHesapla(DataRow row)
+        {
+            decimal miktar = Convert.ToDecimal(row["lMiktar"]);
+            decimal birimFiyat = Convert.ToDecimal(row["lBirimFiyat"]);
+            decimal iskonto = Convert.ToDecimal(row["nIskontoYuzde"]);
+            decimal brut = Yardimcilar.YuvarlaKurus(miktar * birimFiyat);
+            decimal iskontoTutar = Yardimcilar.YuvarlaKurus(brut * (iskonto / 100m));
+            decimal net = Yardimcilar.YuvarlaKurus(brut - iskontoTutar);
+            decimal kdvOrani = Convert.ToDecimal(row["nKdvOrani"]);
+            decimal kdvTutar = Yardimcilar.KdvTutarHesapla(net, kdvOrani);
+
+            row["lSatirToplam"] = net;
+            row["lKdvTutar"] = kdvTutar;
+        }
+
+        private void ToplamlariHesapla()
+        {
+            decimal brutToplam = 0m;
+            decimal kdvToplam = 0m;
+
             foreach (DataRow row in sepet.Rows)
             {
-                toplamTutar += (decimal)row["Tutar"];
+                brutToplam += Convert.ToDecimal(row["lSatirToplam"]);
+                kdvToplam += Convert.ToDecimal(row["lKdvTutar"]);
             }
-            lblToplam.Text = $"TOPLAM: ₺{toplamTutar:N2}";
-            lblUrunSayisi.Text = $"({sepet.Rows.Count} ürün)";
+
+            lblToplam.Text = $"Toplam: {Yardimcilar.ParaFormatla(brutToplam)}";
+            lblKdv.Text = $"KDV: {Yardimcilar.ParaFormatla(kdvToplam)}";
+            lblGenelToplam.Text = $"Genel Toplam: {Yardimcilar.ParaFormatla(brutToplam)}";
         }
 
-        private void BtnUrunSil_Click(object sender, EventArgs e)
+        private void DgvSepet_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
         {
-            if (dgvSepet.SelectedRows.Count > 0)
+            if (e.RowIndex < 0)
             {
-                int index = dgvSepet.SelectedRows[0].Index;
-                sepet.Rows.RemoveAt(index);
-                ToplamHesapla();
+                return;
+            }
+
+            if (e.ColumnIndex == 0)
+            {
+                e.Value = (e.RowIndex + 1).ToString();
+                e.FormattingApplied = true;
+            }
+
+            if (dgvSepet.Columns[e.ColumnIndex].DataPropertyName == "lBirimFiyat" ||
+                dgvSepet.Columns[e.ColumnIndex].DataPropertyName == "lSatirToplam")
+            {
+                if (e.Value != null)
+                {
+                    e.Value = Yardimcilar.ParaFormatla(Convert.ToDecimal(e.Value));
+                    e.FormattingApplied = true;
+                }
+            }
+        }
+
+        private void DgvSepet_CellEndEdit(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0)
+            {
+                return;
+            }
+
+            DataRow row = ((DataRowView)dgvSepet.Rows[e.RowIndex].DataBoundItem).Row;
+            SatirHesapla(row);
+            ToplamlariHesapla();
+        }
+
+        private void BtnOdeme_Click(object sender, EventArgs e)
+        {
+            if (sepet.Rows.Count == 0)
+            {
+                MessageBox.Show("Sepet boş.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            using (var form = new FormOdeme(sepet, musteriId))
+            {
+                if (form.ShowDialog() == DialogResult.OK)
+                {
+                    sepet.Clear();
+                    musteriId = 0;
+                    lblMusteri.Text = "Müşteri: Peşin";
+                    ToplamlariHesapla();
+                    GunlukOzetYukle();
+                }
             }
         }
 
         private void BtnSepetTemizle_Click(object sender, EventArgs e)
         {
-            if (sepet.Rows.Count == 0) return;
-            
-            if (MessageBox.Show("Sepeti temizlemek istediğinize emin misiniz?", "Onay", 
-                MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-            {
-                sepet.Clear();
-                ToplamHesapla();
-            }
-        }
-
-        private void BtnOdemeAl_Click(object sender, EventArgs e)
-        {
             if (sepet.Rows.Count == 0)
             {
-                MessageBox.Show("Sepet boş!", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
-            FormOdeme formOdeme = new FormOdeme(sepet, toplamTutar, musteriId);
-            if (formOdeme.ShowDialog() == DialogResult.OK)
+            if (MessageBox.Show("Sepet temizlensin mi?", "Onay", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
             {
                 sepet.Clear();
-                ToplamHesapla();
-                musteriId = 0;
-                lblMusteriAdi.Text = "Peşin Satış";
-                txtBarkod.Focus();
+                ToplamlariHesapla();
             }
         }
 
-        private void BtnMusteriSec_Click(object sender, EventArgs e)
+        private void BtnMusteri_Click(object sender, EventArgs e)
         {
-            FormMusteriSec formMusteri = new FormMusteriSec();
-            if (formMusteri.ShowDialog() == DialogResult.OK)
+            using (var form = new FormMusteriSec())
             {
-                musteriId = formMusteri.SecilenMusteriId;
-                lblMusteriAdi.Text = formMusteri.SecilenMusteriAdi;
+                if (form.ShowDialog() == DialogResult.OK)
+                {
+                    musteriId = form.SecilenMusteriId;
+                    lblMusteri.Text = $"Müşteri: {form.SecilenMusteriAdi}";
+                }
             }
-        }
-
-        private void BtnUrunler_Click(object sender, EventArgs e)
-        {
-            FormUrunYonetimi form = new FormUrunYonetimi();
-            form.ShowDialog();
-        }
-
-        private void BtnRaporlar_Click(object sender, EventArgs e)
-        {
-            FormRaporlar form = new FormRaporlar();
-            form.ShowDialog();
-        }
-
-        private void BtnAyarlar_Click(object sender, EventArgs e)
-        {
-            FormAyarlar form = new FormAyarlar();
-            form.ShowDialog();
         }
 
         private void FormSatis_KeyDown(object sender, KeyEventArgs e)
         {
             switch (e.KeyCode)
             {
-                case Keys.F12:
-                    BtnOdemeAl_Click(null, null);
-                    e.Handled = true;
-                    break;
-                case Keys.Delete:
-                    BtnUrunSil_Click(null, null);
-                    e.Handled = true;
-                    break;
-                case Keys.Escape:
+                case Keys.F1:
                     txtBarkod.Focus();
-                    txtBarkod.SelectAll();
+                    e.Handled = true;
+                    break;
+                case Keys.F2:
+                    txtArama.Focus();
                     e.Handled = true;
                     break;
                 case Keys.F5:
-                    BtnMusteriSec_Click(null, null);
+                    BtnMusteri_Click(null, null);
+                    e.Handled = true;
+                    break;
+                case Keys.F9:
+                    BtnSepetTemizle_Click(null, null);
+                    e.Handled = true;
+                    break;
+                case Keys.F12:
+                    BtnOdeme_Click(null, null);
+                    e.Handled = true;
+                    break;
+                case Keys.Delete:
+                    if (dgvSepet.SelectedRows.Count > 0)
+                    {
+                        dgvSepet.Rows.RemoveAt(dgvSepet.SelectedRows[0].Index);
+                        ToplamlariHesapla();
+                    }
                     e.Handled = true;
                     break;
             }
