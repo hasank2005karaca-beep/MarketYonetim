@@ -20,6 +20,8 @@ namespace MarketYonetim
 
         private void InitializeComponent()
         {
+            // S7-FIX: DPI ölçekleme
+            AutoScaleMode = AutoScaleMode.Dpi;
             Text = "🏷️ Barkod Yönetimi";
             Size = new Size(400, 420);
             StartPosition = FormStartPosition.CenterParent;
@@ -60,52 +62,54 @@ namespace MarketYonetim
 
         private void BtnEkle_Click(object sender, EventArgs e)
         {
-            string barkod = txtBarkod.Text.Trim();
-            if (string.IsNullOrWhiteSpace(barkod))
-            {
-                MessageBox.Show("Barkod boş olamaz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            if (lstBarkodlar.Items.Contains(barkod))
-            {
-                MessageBox.Show("Bu barkod zaten listede.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            if (VeriKatmani.BarkodVarMi(barkod, stokId))
-            {
-                MessageBox.Show("Bu barkod başka bir üründe kullanılıyor.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
             try
             {
+                string barkod = txtBarkod.Text.Trim();
+                if (string.IsNullOrWhiteSpace(barkod))
+                {
+                    MessageBox.Show("Barkod boş olamaz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (lstBarkodlar.Items.Contains(barkod))
+                {
+                    MessageBox.Show("Bu barkod zaten listede.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (VeriKatmani.BarkodVarMi(barkod, stokId))
+                {
+                    MessageBox.Show("Bu barkod başka bir üründe kullanılıyor.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
                 VeriKatmani.BarkodEkle(stokId, barkod);
                 txtBarkod.Clear();
                 BarkodlariYukle();
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Barkod eklenemedi. Detay: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         private void BtnSil_Click(object sender, EventArgs e)
         {
-            if (lstBarkodlar.SelectedItem == null)
-            {
-                return;
-            }
-
-            string barkod = lstBarkodlar.SelectedItem.ToString();
             try
             {
+                if (lstBarkodlar.SelectedItem == null)
+                {
+                    return;
+                }
+
+                string barkod = lstBarkodlar.SelectedItem.ToString();
                 VeriKatmani.BarkodSil(stokId, barkod);
                 BarkodlariYukle();
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Barkod silinemedi. Detay: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }

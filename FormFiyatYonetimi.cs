@@ -32,6 +32,8 @@ namespace MarketYonetim
 
         private void InitializeComponent()
         {
+            // S7-FIX: DPI ölçekleme
+            AutoScaleMode = AutoScaleMode.Dpi;
             Text = "💲 Fiyat Yönetimi";
             Size = new Size(1350, 820);
             StartPosition = FormStartPosition.CenterParent;
@@ -46,9 +48,36 @@ namespace MarketYonetim
             cmbFiyatTipi.SelectedIndexChanged += (s, e) => { sayfa = 1; UrunleriYukle(); };
 
             btnOnceki = new Button { Text = "◀", Width = 40 };
-            btnOnceki.Click += (s, e) => { if (sayfa > 1) { sayfa--; UrunleriYukle(); } };
+            btnOnceki.Click += (s, e) =>
+            {
+                try
+                {
+                    if (sayfa > 1)
+                    {
+                        sayfa--;
+                        UrunleriYukle();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
             btnSonraki = new Button { Text = "▶", Width = 40 };
-            btnSonraki.Click += (s, e) => { sayfa++; UrunleriYukle(); };
+            btnSonraki.Click += (s, e) =>
+            {
+                try
+                {
+                    sayfa++;
+                    UrunleriYukle();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
             lblSayfa = new Label { AutoSize = true, Text = "Sayfa: 1", Padding = new Padding(0, 6, 0, 0) };
 
             FlowLayoutPanel filtreLayout = new FlowLayoutPanel { Dock = DockStyle.Fill };
@@ -152,8 +181,16 @@ namespace MarketYonetim
                 aramaTimer.Stop();
                 if (txtArama.Text.Length >= 2 || string.IsNullOrWhiteSpace(txtArama.Text))
                 {
-                    sayfa = 1;
-                    UrunleriYukle();
+                    try
+                    {
+                        sayfa = 1;
+                        UrunleriYukle();
+                    }
+                    catch (Exception ex)
+                    {
+                        // S7-FIX: DB hatalarını kullanıcıya göster
+                        MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
                 }
             };
         }
@@ -214,33 +251,41 @@ namespace MarketYonetim
 
         private void BtnKaydet_Click(object sender, EventArgs e)
         {
-            if (!seciliStokId.HasValue)
+            try
             {
-                MessageBox.Show("Lütfen ürün seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
+                if (!seciliStokId.HasValue)
+                {
+                    MessageBox.Show("Lütfen ürün seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                string fiyatTipi = cmbTekilFiyatTipi.SelectedValue?.ToString();
+                if (string.IsNullOrWhiteSpace(fiyatTipi))
+                {
+                    MessageBox.Show("Fiyat tipi seçiniz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                decimal yeniFiyat = nudYeniFiyat.Value;
+                if (yeniFiyat < 0)
+                {
+                    MessageBox.Show("Yeni fiyat 0'dan küçük olamaz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                BeklemedeCalistir(() =>
+                {
+                    VeriKatmani.FiyatGuncelle(seciliStokId.Value, fiyatTipi, yeniFiyat);
+                });
+
+                FiyatlariYukle();
+                UrunleriYukle();
             }
-
-            string fiyatTipi = cmbTekilFiyatTipi.SelectedValue?.ToString();
-            if (string.IsNullOrWhiteSpace(fiyatTipi))
+            catch (Exception ex)
             {
-                MessageBox.Show("Fiyat tipi seçiniz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-
-            decimal yeniFiyat = nudYeniFiyat.Value;
-            if (yeniFiyat < 0)
-            {
-                MessageBox.Show("Yeni fiyat 0'dan küçük olamaz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            BeklemedeCalistir(() =>
-            {
-                VeriKatmani.FiyatGuncelle(seciliStokId.Value, fiyatTipi, yeniFiyat);
-            });
-
-            FiyatlariYukle();
-            UrunleriYukle();
         }
 
         private void TxtArama_TextChanged(object sender, EventArgs e)

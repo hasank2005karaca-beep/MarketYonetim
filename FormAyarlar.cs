@@ -15,6 +15,7 @@ namespace MarketYonetim
         private TextBox txtDepo;
         private TextBox txtKasiyer;
         private TextBox txtKdv;
+        private TextBox txtFiyatTipi;
         private CheckBox chkWindowsAuth;
         private Label lblBaglantiDurum;
 
@@ -109,7 +110,7 @@ namespace MarketYonetim
                 Text = "Mağaza/Kasiyer",
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
                 Location = new Point(20, 340),
-                Size = new Size(560, 120)
+                Size = new Size(560, 155)
             };
 
             int y2 = 30;
@@ -122,12 +123,18 @@ namespace MarketYonetim
 
             Label lblKdv = new Label { Text = "Varsayılan KDV (%):", Location = new Point(20, y2), AutoSize = true };
             txtKdv = new TextBox { Location = new Point(160, y2 - 3), Size = new Size(120, 28) };
+            y2 += 35;
+
+            // S7-FIX: Varsayılan fiyat tipi alanı
+            Label lblFiyatTipi = new Label { Text = "Varsayılan Fiyat Tipi:", Location = new Point(20, y2), AutoSize = true };
+            txtFiyatTipi = new TextBox { Location = new Point(160, y2 - 3), Size = new Size(120, 28) };
 
             grpMagaza.Controls.AddRange(new Control[]
             {
                 lblDepo, txtDepo,
                 lblKasiyer, txtKasiyer,
-                lblKdv, txtKdv
+                lblKdv, txtKdv,
+                lblFiyatTipi, txtFiyatTipi
             });
 
             lblBaglantiDurum = new Label
@@ -199,6 +206,8 @@ namespace MarketYonetim
             txtDepo.Text = Ayarlar.DepoKodu;
             txtKasiyer.Text = Ayarlar.KasiyerRumuzu;
             txtKdv.Text = Ayarlar.VarsayilanKdvOrani.ToString("0.##");
+            // S7-FIX: Varsayılan fiyat tipi yükle
+            txtFiyatTipi.Text = Ayarlar.VarsayilanFiyatTipi;
             ChkWindowsAuth_CheckedChanged(this, EventArgs.Empty);
         }
 
@@ -211,21 +220,29 @@ namespace MarketYonetim
 
         private void BtnTest_Click(object sender, EventArgs e)
         {
-            GeciciAyarlariUygula();
-
-            lblBaglantiDurum.Text = "Test ediliyor...";
-            lblBaglantiDurum.ForeColor = Color.Orange;
-            Application.DoEvents();
-
-            if (Ayarlar.BaglantiTest())
+            try
             {
-                lblBaglantiDurum.Text = "✓ Bağlantı başarılı!";
-                lblBaglantiDurum.ForeColor = Color.Green;
+                GeciciAyarlariUygula();
+
+                lblBaglantiDurum.Text = "Test ediliyor...";
+                lblBaglantiDurum.ForeColor = Color.Orange;
+                Application.DoEvents();
+
+                if (Ayarlar.BaglantiTest())
+                {
+                    lblBaglantiDurum.Text = "✓ Bağlantı başarılı!";
+                    lblBaglantiDurum.ForeColor = Color.Green;
+                }
+                else
+                {
+                    lblBaglantiDurum.Text = "✗ Bağlantı başarısız!";
+                    lblBaglantiDurum.ForeColor = Color.Red;
+                }
             }
-            else
+            catch (Exception ex)
             {
-                lblBaglantiDurum.Text = "✗ Bağlantı başarısız!";
-                lblBaglantiDurum.ForeColor = Color.Red;
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -254,6 +271,8 @@ namespace MarketYonetim
             {
                 Ayarlar.VarsayilanKdvOrani = kdv;
             }
+            // S7-FIX: Varsayılan fiyat tipi kaydet
+            Ayarlar.VarsayilanFiyatTipi = txtFiyatTipi.Text.Trim();
             Ayarlar.ConnectionStringOlustur();
         }
     }

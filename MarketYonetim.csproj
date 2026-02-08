@@ -7,11 +7,12 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
 
-    <AssemblyName>KarakasMarket</AssemblyName>
+    <!-- S7-FIX: Branding güncelle -->
+    <AssemblyName>MarketYonetim</AssemblyName>
     <RootNamespace>MarketYonetim</RootNamespace>
     <Version>1.0.0</Version>
-    <Company>Karakaş Market</Company>
-    <Product>Karakaş Market POS</Product>
+    <Company>MarketYonetim</Company>
+    <Product>MarketYonetim POS</Product>
     <Description>Market Satış ve Yönetim Yazılımı</Description>
   </PropertyGroup>
 

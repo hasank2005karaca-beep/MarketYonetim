@@ -22,6 +22,8 @@ namespace MarketYonetim
 
         private void InitializeComponent()
         {
+            // S7-FIX: DPI ölçekleme
+            AutoScaleMode = AutoScaleMode.Dpi;
             this.Text = "👤 Müşteri Seç";
             this.Size = new Size(800, 600);
             this.StartPosition = FormStartPosition.CenterParent;

@@ -59,6 +59,8 @@ namespace MarketYonetim
 
         private void InitializeComponent()
         {
+            // S7-FIX: DPI ölçekleme
+            AutoScaleMode = AutoScaleMode.Dpi;
             Text = "📦 Toplu İşlemler";
             Size = new Size(1350, 820);
             StartPosition = FormStartPosition.CenterParent;
@@ -94,7 +96,18 @@ namespace MarketYonetim
             cmbStokDurumFiyat.SelectedIndex = 0;
             cmbFiyatTipiFiyat = new ComboBox { Width = 140, DropDownStyle = ComboBoxStyle.DropDownList };
             btnOnizleme = new Button { Text = "Önizleme", Width = 110 };
-            btnOnizleme.Click += (s, e) => OnizlemeYukle();
+            btnOnizleme.Click += (s, e) =>
+            {
+                try
+                {
+                    OnizlemeYukle();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
             lblOnizleme = new Label { AutoSize = true, Text = "Etkilenecek: 0", Padding = new Padding(0, 6, 0, 0) };
 
             FlowLayoutPanel filtreLayout = new FlowLayoutPanel { Dock = DockStyle.Fill };
@@ -149,7 +162,19 @@ namespace MarketYonetim
             cmbStokDurumKategori.Items.AddRange(new object[] { "Hepsi", "Var", "Yok" });
             cmbStokDurumKategori.SelectedIndex = 0;
             btnKategoriYukle = new Button { Text = "Yükle", Width = 90 };
-            btnKategoriYukle.Click += (s, e) => { kategoriSayfa = 1; KategoriUrunleriYukle(); };
+            btnKategoriYukle.Click += (s, e) =>
+            {
+                try
+                {
+                    kategoriSayfa = 1;
+                    KategoriUrunleriYukle();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
 
             btnKategoriUygula = new Button { Text = "Uygula", Width = 90, BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White };
             btnKategoriUygula.Click += BtnKategoriUygula_Click;
@@ -199,9 +224,36 @@ namespace MarketYonetim
             txtYeniKat1 = new TextBox { Width = 140 };
             txtYeniKat2 = new TextBox { Width = 140 };
             Button btnOnceki = new Button { Text = "◀", Width = 40 };
-            btnOnceki.Click += (s, e) => { if (kategoriSayfa > 1) { kategoriSayfa--; KategoriUrunleriYukle(); } };
+            btnOnceki.Click += (s, e) =>
+            {
+                try
+                {
+                    if (kategoriSayfa > 1)
+                    {
+                        kategoriSayfa--;
+                        KategoriUrunleriYukle();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
             Button btnSonraki = new Button { Text = "▶", Width = 40 };
-            btnSonraki.Click += (s, e) => { kategoriSayfa++; KategoriUrunleriYukle(); };
+            btnSonraki.Click += (s, e) =>
+            {
+                try
+                {
+                    kategoriSayfa++;
+                    KategoriUrunleriYukle();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
 
             FlowLayoutPanel kategoriLayout = new FlowLayoutPanel { Dock = DockStyle.Fill };
             kategoriLayout.Controls.AddRange(new Control[]
@@ -227,9 +279,36 @@ namespace MarketYonetim
             btnBarkodEkle = new Button { Text = "Barkod Ekle", Width = 120, BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White };
             btnBarkodEkle.Click += BtnBarkodEkle_Click;
             btnBarkodOnceki = new Button { Text = "◀", Width = 40 };
-            btnBarkodOnceki.Click += (s, e) => { if (barkodSayfa > 1) { barkodSayfa--; BarkodsuzUrunleriYukle(); } };
+            btnBarkodOnceki.Click += (s, e) =>
+            {
+                try
+                {
+                    if (barkodSayfa > 1)
+                    {
+                        barkodSayfa--;
+                        BarkodsuzUrunleriYukle();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
             btnBarkodSonraki = new Button { Text = "▶", Width = 40 };
-            btnBarkodSonraki.Click += (s, e) => { barkodSayfa++; BarkodsuzUrunleriYukle(); };
+            btnBarkodSonraki.Click += (s, e) =>
+            {
+                try
+                {
+                    barkodSayfa++;
+                    BarkodsuzUrunleriYukle();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
             lblBarkodSayfa = new Label { AutoSize = true, Text = "Sayfa: 1", Padding = new Padding(0, 6, 0, 0) };
 
             FlowLayoutPanel ustLayout = new FlowLayoutPanel { Dock = DockStyle.Fill };
@@ -378,33 +457,41 @@ namespace MarketYonetim
 
         private void BtnTopluFiyatUygula_Click(object sender, EventArgs e)
         {
-            string arama = txtAramaFiyat.Text;
-            string kat1 = cmbKat1Fiyat.SelectedValue?.ToString();
-            string kat2 = cmbKat2Fiyat.SelectedValue?.ToString();
-            string stokDurum = cmbStokDurumFiyat.SelectedItem?.ToString();
-            string fiyatTipi = cmbFiyatTipiFiyat.SelectedValue?.ToString();
-            decimal yuzde = nudYuzde.Value;
-            string yuvarlama = cmbYuvarlama.SelectedItem?.ToString();
-
-            BeklemedeCalistir(() =>
+            try
             {
-                int toplam = 0;
-                int sayfa = 1;
-                while (true)
+                string arama = txtAramaFiyat.Text;
+                string kat1 = cmbKat1Fiyat.SelectedValue?.ToString();
+                string kat2 = cmbKat2Fiyat.SelectedValue?.ToString();
+                string stokDurum = cmbStokDurumFiyat.SelectedItem?.ToString();
+                string fiyatTipi = cmbFiyatTipiFiyat.SelectedValue?.ToString();
+                decimal yuzde = nudYuzde.Value;
+                string yuvarlama = cmbYuvarlama.SelectedItem?.ToString();
+
+                BeklemedeCalistir(() =>
                 {
-                    DataTable dt = VeriKatmani.UrunIdleriGetirFiltreli(arama, kat1, kat2, null, null, stokDurum, fiyatTipi, sayfa, 200);
-                    if (dt.Rows.Count == 0)
+                    int toplam = 0;
+                    int sayfa = 1;
+                    while (true)
                     {
-                        break;
+                        DataTable dt = VeriKatmani.UrunIdleriGetirFiltreli(arama, kat1, kat2, null, null, stokDurum, fiyatTipi, sayfa, 200);
+                        if (dt.Rows.Count == 0)
+                        {
+                            break;
+                        }
+
+                        List<int> ids = dt.AsEnumerable().Select(r => Convert.ToInt32(r["nStokID"])).ToList();
+                        toplam += VeriKatmani.TopluFiyatGuncelleYuzde(ids, fiyatTipi, yuzde, yuvarlama);
+                        sayfa++;
                     }
 
-                    List<int> ids = dt.AsEnumerable().Select(r => Convert.ToInt32(r["nStokID"])).ToList();
-                    toplam += VeriKatmani.TopluFiyatGuncelleYuzde(ids, fiyatTipi, yuzde, yuvarlama);
-                    sayfa++;
-                }
-
-                MessageBox.Show($"{toplam} ürün güncellendi.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            });
+                    MessageBox.Show($"{toplam} ürün güncellendi.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                });
+            }
+            catch (Exception ex)
+            {
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void KategoriUrunleriYukle()
@@ -424,30 +511,38 @@ namespace MarketYonetim
 
         private void BtnKategoriUygula_Click(object sender, EventArgs e)
         {
-            List<int> seciliIds = new List<int>();
-            foreach (DataGridViewRow row in dgvKategoriUrunler.Rows)
+            try
             {
-                bool secili = row.Cells["Sec"].Value is bool b && b;
-                if (secili)
+                List<int> seciliIds = new List<int>();
+                foreach (DataGridViewRow row in dgvKategoriUrunler.Rows)
                 {
-                    seciliIds.Add(Convert.ToInt32(row.Cells["ID"].Value));
+                    bool secili = row.Cells["Sec"].Value is bool b && b;
+                    if (secili)
+                    {
+                        seciliIds.Add(Convert.ToInt32(row.Cells["ID"].Value));
+                    }
                 }
+
+                if (seciliIds.Count == 0)
+                {
+                    MessageBox.Show("Lütfen en az bir ürün seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                string yeniKat1 = txtYeniKat1.Text.Trim();
+                string yeniKat2 = txtYeniKat2.Text.Trim();
+
+                BeklemedeCalistir(() =>
+                {
+                    int adet = VeriKatmani.TopluKategoriAta(seciliIds, yeniKat1, yeniKat2);
+                    MessageBox.Show($"{adet} ürün güncellendi.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                });
             }
-
-            if (seciliIds.Count == 0)
+            catch (Exception ex)
             {
-                MessageBox.Show("Lütfen en az bir ürün seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-
-            string yeniKat1 = txtYeniKat1.Text.Trim();
-            string yeniKat2 = txtYeniKat2.Text.Trim();
-
-            BeklemedeCalistir(() =>
-            {
-                int adet = VeriKatmani.TopluKategoriAta(seciliIds, yeniKat1, yeniKat2);
-                MessageBox.Show($"{adet} ürün güncellendi.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            });
         }
 
         private void BarkodsuzUrunleriYukle()
@@ -462,54 +557,70 @@ namespace MarketYonetim
 
         private void BtnBarkodEkle_Click(object sender, EventArgs e)
         {
-            if (dgvBarkodsuz.SelectedRows.Count == 0)
+            try
             {
-                MessageBox.Show("Lütfen ürün seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
+                if (dgvBarkodsuz.SelectedRows.Count == 0)
+                {
+                    MessageBox.Show("Lütfen ürün seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                string barkod = txtBarkod.Text.Trim();
+                if (string.IsNullOrWhiteSpace(barkod))
+                {
+                    MessageBox.Show("Barkod boş olamaz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                int stokId = Convert.ToInt32(dgvBarkodsuz.SelectedRows[0].Cells["ID"].Value);
+                BeklemedeCalistir(() =>
+                {
+                    VeriKatmani.BarkodEkle(stokId, barkod);
+                });
+
+                txtBarkod.Clear();
+                BarkodsuzUrunleriYukle();
             }
-
-            string barkod = txtBarkod.Text.Trim();
-            if (string.IsNullOrWhiteSpace(barkod))
+            catch (Exception ex)
             {
-                MessageBox.Show("Barkod boş olamaz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-
-            int stokId = Convert.ToInt32(dgvBarkodsuz.SelectedRows[0].Cells["ID"].Value);
-            BeklemedeCalistir(() =>
-            {
-                VeriKatmani.BarkodEkle(stokId, barkod);
-            });
-
-            txtBarkod.Clear();
-            BarkodsuzUrunleriYukle();
         }
 
         private void BtnExport_Click(object sender, EventArgs e)
         {
-            using (SaveFileDialog dialog = new SaveFileDialog())
+            try
             {
-                dialog.Filter = "CSV (*.csv)|*.csv";
-                dialog.FileName = $"urunler_{DateTime.Now:yyyyMMdd_HHmm}.csv";
-                if (dialog.ShowDialog() != DialogResult.OK)
+                using (SaveFileDialog dialog = new SaveFileDialog())
                 {
-                    return;
+                    dialog.Filter = "CSV (*.csv)|*.csv";
+                    dialog.FileName = $"urunler_{DateTime.Now:yyyyMMdd_HHmm}.csv";
+                    if (dialog.ShowDialog() != DialogResult.OK)
+                    {
+                        return;
+                    }
+
+                    string arama = txtAramaExport.Text;
+                    string kat1 = cmbKat1Export.SelectedValue?.ToString();
+                    string kat2 = cmbKat2Export.SelectedValue?.ToString();
+                    string stokDurum = cmbStokDurumExport.SelectedItem?.ToString();
+                    string fiyatTipi = cmbFiyatTipiExport.SelectedValue?.ToString();
+
+                    BeklemedeCalistir(() =>
+                    {
+                        DataTable dt = VeriKatmani.UrunleriExportIcinGetir(arama, kat1, kat2, fiyatTipi, stokDurum);
+                        string csv = CsvOlustur(dt);
+                        File.WriteAllText(dialog.FileName, csv, Encoding.UTF8);
+                    });
+
+                    MessageBox.Show("CSV dosyası oluşturuldu.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
-
-                string arama = txtAramaExport.Text;
-                string kat1 = cmbKat1Export.SelectedValue?.ToString();
-                string kat2 = cmbKat2Export.SelectedValue?.ToString();
-                string stokDurum = cmbStokDurumExport.SelectedItem?.ToString();
-                string fiyatTipi = cmbFiyatTipiExport.SelectedValue?.ToString();
-
-                BeklemedeCalistir(() =>
-                {
-                    DataTable dt = VeriKatmani.UrunleriExportIcinGetir(arama, kat1, kat2, fiyatTipi, stokDurum);
-                    string csv = CsvOlustur(dt);
-                    File.WriteAllText(dialog.FileName, csv, Encoding.UTF8);
-                });
-
-                MessageBox.Show("CSV dosyası oluşturuldu.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

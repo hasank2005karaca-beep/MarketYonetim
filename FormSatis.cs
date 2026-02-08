@@ -26,6 +26,7 @@ namespace MarketYonetim
         private Label lblMusteri;
         private Button btnOdeme;
         private Button btnSepetTemizle;
+        private Panel panelMenu;
 
         public FormSatis()
         {
@@ -56,7 +57,12 @@ namespace MarketYonetim
             layout.Controls.Add(OlusturOrtaPanel(), 0, 1);
             layout.Controls.Add(OlusturAltPanel(), 0, 2);
 
-            Controls.Add(layout);
+            var anaPanel = new Panel { Dock = DockStyle.Fill };
+            // S7-FIX: Sol menü paneli
+            panelMenu = OlusturMenuPanel();
+            anaPanel.Controls.Add(layout);
+            anaPanel.Controls.Add(panelMenu);
+            Controls.Add(anaPanel);
 
             aramaTimer.Interval = 300;
             aramaTimer.Tick += AramaTimer_Tick;
@@ -119,6 +125,63 @@ namespace MarketYonetim
             return panel;
         }
 
+        private Panel OlusturMenuPanel()
+        {
+            var panel = new Panel
+            {
+                Dock = DockStyle.Left,
+                Width = 180,
+                BackColor = Color.FromArgb(30, 30, 46)
+            };
+
+            int y = 20;
+            panel.Controls.Add(OlusturMenuButon("📦 Ürünler (F3)", y, (_, __) => AcForm(new FormUrunYonetimi()))); y += 45;
+            panel.Controls.Add(OlusturMenuButon("📋 Stok (F4)", y, (_, __) => AcForm(new FormStokYonetimi()))); y += 45;
+            panel.Controls.Add(OlusturMenuButon("👥 Müşteriler (F6)", y, (_, __) => AcForm(new FormMusteriYonetimi()))); y += 45;
+            panel.Controls.Add(OlusturMenuButon("📊 Raporlar (F7)", y, (_, __) => AcForm(new FormRaporlar()))); y += 45;
+            panel.Controls.Add(OlusturMenuButon("⚙️ Toplu İşlemler (F8)", y, (_, __) => AcForm(new FormTopluIslemler()))); y += 45;
+            panel.Controls.Add(OlusturMenuButon("💲 Fiyatlar (F10)", y, (_, __) => AcForm(new FormFiyatYonetimi()))); y += 45;
+            panel.Controls.Add(OlusturMenuButon("🔧 Ayarlar (F11)", y, (_, __) =>
+            {
+                using (var form = new FormAyarlar())
+                {
+                    form.ShowDialog();
+                }
+                Ayarlar.YukleAyarlar();
+                GunSatisOzetiniGuncelle();
+            }));
+
+            return panel;
+        }
+
+        private Button OlusturMenuButon(string text, int y, EventHandler click)
+        {
+            var btn = new Button
+            {
+                Text = text,
+                Width = 160,
+                Height = 36,
+                Location = new Point(10, y),
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Color.White,
+                BackColor = Color.FromArgb(45, 45, 64),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+            btn.FlatAppearance.BorderSize = 0;
+            btn.Click += click;
+            return btn;
+        }
+
+        private void AcForm(Form form)
+        {
+            using (form)
+            {
+                form.ShowDialog();
+            }
+            // S7-FIX: Form dönüşünde satış özetini güncelle
+            GunSatisOzetiniGuncelle();
+        }
+
         private Control OlusturOrtaPanel()
         {
             var panel = new TableLayoutPanel
@@ -156,10 +219,8 @@ namespace MarketYonetim
                 RowHeadersVisible = false
             };
 
-            typeof(DataGridView).InvokeMember("DoubleBuffered",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.SetProperty,
-                null, dgvSepet, new object[] { true });
+            // S7-FIX: Grid flicker azaltma
+            Yardimcilar.DoubleBufferedAktifEt(dgvSepet);
 
             dgvSepet.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(0, 122, 204);
             dgvSepet.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
@@ -436,6 +497,12 @@ namespace MarketYonetim
             }
         }
 
+        private void GunSatisOzetiniGuncelle()
+        {
+            // S7-FIX: Menü dönüşlerinde güncel satış özetini yükle
+            GunlukOzetYukle();
+        }
+
         private void TxtBarkod_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.KeyCode == Keys.Enter)
@@ -682,6 +749,39 @@ namespace MarketYonetim
                     break;
                 case Keys.F5:
                     BtnMusteri_Click(null, null);
+                    e.Handled = true;
+                    break;
+                case Keys.F3:
+                    AcForm(new FormUrunYonetimi());
+                    e.Handled = true;
+                    break;
+                case Keys.F4:
+                    AcForm(new FormStokYonetimi());
+                    e.Handled = true;
+                    break;
+                case Keys.F6:
+                    AcForm(new FormMusteriYonetimi());
+                    e.Handled = true;
+                    break;
+                case Keys.F7:
+                    AcForm(new FormRaporlar());
+                    e.Handled = true;
+                    break;
+                case Keys.F8:
+                    AcForm(new FormTopluIslemler());
+                    e.Handled = true;
+                    break;
+                case Keys.F10:
+                    AcForm(new FormFiyatYonetimi());
+                    e.Handled = true;
+                    break;
+                case Keys.F11:
+                    using (var form = new FormAyarlar())
+                    {
+                        form.ShowDialog();
+                    }
+                    Ayarlar.YukleAyarlar();
+                    GunSatisOzetiniGuncelle();
                     e.Handled = true;
                     break;
                 case Keys.F9:

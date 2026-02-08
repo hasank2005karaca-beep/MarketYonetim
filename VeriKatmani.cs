@@ -4,6 +4,7 @@ using System.Data;
 using System.Data.SqlClient;
 using System.Linq;
 using System.Text;
+using System.Collections.Concurrent;
 
 namespace MarketYonetim
 {
@@ -22,6 +23,12 @@ namespace MarketYonetim
     /// </summary>
     public static class VeriKatmani
     {
+        // S7-FIX: Kolon cache
+        private static readonly ConcurrentDictionary<string, HashSet<string>> _kolonCache
+            = new ConcurrentDictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        // S7-FIX: Identity cache
+        private static readonly ConcurrentDictionary<string, bool> _identityCache
+            = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         private const string DiscoveryTabloYapisiSql = @"
 SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE, COLUMN_DEFAULT
 FROM INFORMATION_SCHEMA.COLUMNS
@@ -76,13 +83,34 @@ ORDER BY t.name, i.name;";
 
         public static SqlConnection BaglantiOlustur()
         {
-            return new SqlConnection(Ayarlar.ConnectionString);
+            return SqlHataSarmala(() => new SqlConnection(Ayarlar.ConnectionString));
         }
 
         public static DataTable SorguCalistirDataTable(string sql, params SqlParameter[] parametreler)
         {
-            using (SqlConnection conn = BaglantiOlustur())
-            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            return SqlHataSarmala(() =>
+            {
+                using (SqlConnection conn = BaglantiOlustur())
+                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                {
+                    if (parametreler != null && parametreler.Length > 0)
+                    {
+                        cmd.Parameters.AddRange(parametreler);
+                    }
+
+                    using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                    {
+                        DataTable dt = new DataTable();
+                        adapter.Fill(dt);
+                        return dt;
+                    }
+                }
+            });
+        }
+
+        private static DataTable SorguCalistirDataTable(SqlConnection conn, SqlTransaction tran, string sql, params SqlParameter[] parametreler)
+        {
+            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
             {
                 if (parametreler != null && parametreler.Length > 0)
                 {
@@ -100,198 +128,293 @@ ORDER BY t.name, i.name;";
 
         public static object SorguCalistirScalar(string sql, params SqlParameter[] parametreler)
         {
-            using (SqlConnection conn = BaglantiOlustur())
-            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            return SqlHataSarmala(() =>
+            {
+                using (SqlConnection conn = BaglantiOlustur())
+                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                {
+                    if (parametreler != null && parametreler.Length > 0)
+                    {
+                        cmd.Parameters.AddRange(parametreler);
+                    }
+
+                    conn.Open();
+                    return cmd.ExecuteScalar();
+                }
+            });
+        }
+
+        private static object SorguCalistirScalar(SqlConnection conn, SqlTransaction tran, string sql, params SqlParameter[] parametreler)
+        {
+            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
             {
                 if (parametreler != null && parametreler.Length > 0)
                 {
                     cmd.Parameters.AddRange(parametreler);
                 }
 
-                conn.Open();
                 return cmd.ExecuteScalar();
             }
         }
 
         public static int SorguCalistirNonQuery(string sql, params SqlParameter[] parametreler)
         {
-            using (SqlConnection conn = BaglantiOlustur())
-            using (SqlCommand cmd = new SqlCommand(sql, conn))
+            return SqlHataSarmala(() =>
             {
-                if (parametreler != null && parametreler.Length > 0)
+                using (SqlConnection conn = BaglantiOlustur())
+                using (SqlCommand cmd = new SqlCommand(sql, conn))
                 {
-                    cmd.Parameters.AddRange(parametreler);
-                }
+                    if (parametreler != null && parametreler.Length > 0)
+                    {
+                        cmd.Parameters.AddRange(parametreler);
+                    }
 
-                conn.Open();
-                return cmd.ExecuteNonQuery();
-            }
+                    conn.Open();
+                    return cmd.ExecuteNonQuery();
+                }
+            });
         }
 
         public static T TransactionCalistir<T>(Func<SqlConnection, SqlTransaction, T> islem)
         {
-            using (SqlConnection conn = BaglantiOlustur())
+            return SqlHataSarmala(() =>
             {
-                conn.Open();
-                using (SqlTransaction tran = conn.BeginTransaction(IsolationLevel.Serializable))
+                using (SqlConnection conn = BaglantiOlustur())
                 {
-                    try
+                    conn.Open();
+                    using (SqlTransaction tran = conn.BeginTransaction(IsolationLevel.Serializable))
+                    {
+                        try
+                        {
+                            T sonuc = islem(conn, tran);
+                            tran.Commit();
+                            return sonuc;
+                        }
+                        catch
+                        {
+                            tran.Rollback();
+                            throw;
+                        }
+                    }
+                }
+            });
+        }
+
+        public static void TransactionCalistir(Action<SqlConnection, SqlTransaction> islem)
+        {
+            SqlHataSarmala(() =>
+            {
+                TransactionCalistir((conn, tran) =>
+                {
+                    islem(conn, tran);
+                    return 0;
+                });
+            });
+        }
+
+        // S7-FIX: SQL hatalarını kullanıcıya taşır
+        private static T SqlHataSarmala<T>(Func<T> islem)
+        {
+            try
+            {
+                return islem();
+            }
+            catch (SqlException ex) when (ex.Number == -2)
+            {
+                throw new TimeoutException("Veritabanı zaman aşımı. Lütfen tekrar deneyin.", ex);
+            }
+            catch (SqlException ex)
+            {
+                throw new InvalidOperationException($"Veritabanı hatası: {ex.Message}", ex);
+            }
+        }
+
+        // S7-FIX: SQL hatalarını kullanıcıya taşır (void)
+        private static void SqlHataSarmala(Action islem)
+        {
+            SqlHataSarmala(() =>
+            {
+                islem();
+                return 0;
+            });
+        }
+
+        // S7-FIX: Okuma işlemleri için hafif isolation level
+        public static T OkumaIslem<T>(Func<SqlConnection, SqlTransaction, T> islem)
+        {
+            return SqlHataSarmala(() =>
+            {
+                using (SqlConnection conn = BaglantiOlustur())
+                {
+                    conn.Open();
+                    using (SqlTransaction tran = conn.BeginTransaction(IsolationLevel.ReadCommitted))
                     {
                         T sonuc = islem(conn, tran);
                         tran.Commit();
                         return sonuc;
                     }
-                    catch
-                    {
-                        tran.Rollback();
-                        throw;
-                    }
                 }
-            }
-        }
-
-        public static void TransactionCalistir(Action<SqlConnection, SqlTransaction> islem)
-        {
-            TransactionCalistir((conn, tran) =>
-            {
-                islem(conn, tran);
-                return 0;
             });
         }
 
         public static int YeniIdUret(SqlConnection conn, SqlTransaction tran, string tablo, string pkKolon)
         {
-            string sql = $"SELECT ISNULL(MAX({pkKolon}), 0) + 1 FROM {tablo} WITH (UPDLOCK, HOLDLOCK)";
-            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
+            return SqlHataSarmala(() =>
             {
-                object sonuc = cmd.ExecuteScalar();
-                return Convert.ToInt32(sonuc);
-            }
+                string sql = $"SELECT ISNULL(MAX({pkKolon}), 0) + 1 FROM {tablo} WITH (UPDLOCK, HOLDLOCK)";
+                using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
+                {
+                    object sonuc = cmd.ExecuteScalar();
+                    return Convert.ToInt32(sonuc);
+                }
+            });
         }
 
         public static DataTable DiscoveryTabloYapisi()
         {
-            return SorguCalistirDataTable(DiscoveryTabloYapisiSql);
+            return SqlHataSarmala(() => SorguCalistirDataTable(DiscoveryTabloYapisiSql));
         }
 
         public static DataTable DiscoveryIdentityKontrol()
         {
-            return SorguCalistirDataTable(DiscoveryIdentitySql);
+            return SqlHataSarmala(() => SorguCalistirDataTable(DiscoveryIdentitySql));
         }
 
         public static DataTable DiscoveryNumaratorKontrol()
         {
-            return SorguCalistirDataTable(DiscoveryNumaratorSql);
+            return SqlHataSarmala(() => SorguCalistirDataTable(DiscoveryNumaratorSql));
         }
 
         public static DataSet DiscoveryOrnekKayitlar()
         {
-            using (SqlConnection conn = BaglantiOlustur())
-            using (SqlCommand cmd = new SqlCommand(DiscoveryOrnekSql, conn))
-            using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+            return SqlHataSarmala(() =>
             {
-                DataSet ds = new DataSet();
-                adapter.Fill(ds);
-                return ds;
-            }
+                using (SqlConnection conn = BaglantiOlustur())
+                using (SqlCommand cmd = new SqlCommand(DiscoveryOrnekSql, conn))
+                using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                {
+                    DataSet ds = new DataSet();
+                    adapter.Fill(ds);
+                    return ds;
+                }
+            });
         }
 
         public static DataSet DiscoveryFisTipleri()
         {
-            using (SqlConnection conn = BaglantiOlustur())
-            using (SqlCommand cmd = new SqlCommand(DiscoveryFisTipiSql, conn))
-            using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+            return SqlHataSarmala(() =>
             {
-                DataSet ds = new DataSet();
-                adapter.Fill(ds);
-                return ds;
-            }
+                using (SqlConnection conn = BaglantiOlustur())
+                using (SqlCommand cmd = new SqlCommand(DiscoveryFisTipiSql, conn))
+                using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                {
+                    DataSet ds = new DataSet();
+                    adapter.Fill(ds);
+                    return ds;
+                }
+            });
         }
 
         public static DataTable DiscoveryDepolar()
         {
-            return SorguCalistirDataTable(DiscoveryDepoSql);
+            return SqlHataSarmala(() => SorguCalistirDataTable(DiscoveryDepoSql));
         }
 
         public static DataTable DiscoveryIndexler()
         {
-            return SorguCalistirDataTable(DiscoveryIndexSql);
+            return SqlHataSarmala(() => SorguCalistirDataTable(DiscoveryIndexSql));
         }
 
         public static void DiscoveryLogla()
         {
-            try
+            SqlHataSarmala(() =>
             {
-                DataTable tabloYapisi = DiscoveryTabloYapisi();
-                DataTable identity = DiscoveryIdentityKontrol();
-                DataTable numarator = DiscoveryNumaratorKontrol();
-                DataSet ornekler = DiscoveryOrnekKayitlar();
-                DataSet fisTipleri = DiscoveryFisTipleri();
-                DataTable depolar = DiscoveryDepolar();
-                DataTable indexler = DiscoveryIndexler();
+                try
+                {
+                    DataTable tabloYapisi = DiscoveryTabloYapisi();
+                    DataTable identity = DiscoveryIdentityKontrol();
+                    DataTable numarator = DiscoveryNumaratorKontrol();
+                    DataSet ornekler = DiscoveryOrnekKayitlar();
+                    DataSet fisTipleri = DiscoveryFisTipleri();
+                    DataTable depolar = DiscoveryDepolar();
+                    DataTable indexler = DiscoveryIndexler();
 
-                StringBuilder sb = new StringBuilder();
-                sb.AppendLine("=== DISCOVERY TABLO YAPISI ===");
-                sb.AppendLine($"Satır: {tabloYapisi.Rows.Count}");
-                sb.AppendLine("=== DISCOVERY IDENTITY ===");
-                sb.AppendLine($"Satır: {identity.Rows.Count}");
-                sb.AppendLine("=== DISCOVERY NUMARATOR ===");
-                sb.AppendLine($"Satır: {numarator.Rows.Count}");
-                sb.AppendLine("=== DISCOVERY ÖRNEK KAYITLAR ===");
-                sb.AppendLine($"Set: {ornekler.Tables.Count}");
-                sb.AppendLine("=== DISCOVERY FİŞ TİPLERİ ===");
-                sb.AppendLine($"Set: {fisTipleri.Tables.Count}");
-                sb.AppendLine("=== DISCOVERY DEPOLAR ===");
-                sb.AppendLine($"Satır: {depolar.Rows.Count}");
-                sb.AppendLine("=== DISCOVERY INDEXLER ===");
-                sb.AppendLine($"Satır: {indexler.Rows.Count}");
+                    StringBuilder sb = new StringBuilder();
+                    sb.AppendLine("=== DISCOVERY TABLO YAPISI ===");
+                    sb.AppendLine($"Satır: {tabloYapisi.Rows.Count}");
+                    sb.AppendLine("=== DISCOVERY IDENTITY ===");
+                    sb.AppendLine($"Satır: {identity.Rows.Count}");
+                    sb.AppendLine("=== DISCOVERY NUMARATOR ===");
+                    sb.AppendLine($"Satır: {numarator.Rows.Count}");
+                    sb.AppendLine("=== DISCOVERY ÖRNEK KAYITLAR ===");
+                    sb.AppendLine($"Set: {ornekler.Tables.Count}");
+                    sb.AppendLine("=== DISCOVERY FİŞ TİPLERİ ===");
+                    sb.AppendLine($"Set: {fisTipleri.Tables.Count}");
+                    sb.AppendLine("=== DISCOVERY DEPOLAR ===");
+                    sb.AppendLine($"Satır: {depolar.Rows.Count}");
+                    sb.AppendLine("=== DISCOVERY INDEXLER ===");
+                    sb.AppendLine($"Satır: {indexler.Rows.Count}");
 
-                Console.WriteLine(sb.ToString());
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Discovery çalıştırılamadı: {ex.Message}");
-            }
+                    // S7-FIX: Console yerine dosya log
+                    string logPath = System.IO.Path.Combine(AppContext.BaseDirectory, "discovery_log.txt");
+                    System.IO.File.WriteAllText(logPath, sb.ToString());
+                }
+                catch (SqlException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Discovery çalıştırılamadı: {ex.Message}");
+                }
+            });
         }
 
         private static HashSet<string> TabloKolonlariniGetir(SqlConnection conn, SqlTransaction tran, string tablo)
         {
-            HashSet<string> kolonlar = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            string sql = @"SELECT c.name
+            return _kolonCache.GetOrAdd(tablo, t =>
+            {
+                HashSet<string> kolonlar = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                string sql = @"SELECT c.name
 FROM sys.columns c
 JOIN sys.tables t ON c.object_id = t.object_id
 WHERE t.name = @tablo";
-            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
-            {
-                cmd.Parameters.AddWithValue("@tablo", tablo);
-                using (SqlDataReader reader = cmd.ExecuteReader())
+                using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
                 {
-                    while (reader.Read())
+                    cmd.Parameters.AddWithValue("@tablo", t);
+                    using (SqlDataReader reader = cmd.ExecuteReader())
                     {
-                        kolonlar.Add(reader.GetString(0));
+                        while (reader.Read())
+                        {
+                            kolonlar.Add(reader.GetString(0));
+                        }
                     }
                 }
-            }
-            return kolonlar;
+                return kolonlar;
+            });
         }
 
         private static bool IdentityKolonVarMi(SqlConnection conn, SqlTransaction tran, string tablo, string kolon)
         {
-            const string sql = @"SELECT c.is_identity
+            string key = $"{tablo}.{kolon}";
+            return _identityCache.GetOrAdd(key, _ =>
+            {
+                const string sql = @"SELECT c.is_identity
 FROM sys.columns c
 JOIN sys.tables t ON c.object_id = t.object_id
 WHERE t.name = @tablo AND c.name = @kolon";
-            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
-            {
-                cmd.Parameters.AddWithValue("@tablo", tablo);
-                cmd.Parameters.AddWithValue("@kolon", kolon);
-                object sonuc = cmd.ExecuteScalar();
-                if (sonuc == null || sonuc == DBNull.Value)
+                using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
                 {
-                    return false;
+                    cmd.Parameters.AddWithValue("@tablo", tablo);
+                    cmd.Parameters.AddWithValue("@kolon", kolon);
+                    object sonuc = cmd.ExecuteScalar();
+                    if (sonuc == null || sonuc == DBNull.Value)
+                    {
+                        return false;
+                    }
+                    return Convert.ToBoolean(sonuc);
                 }
-                return Convert.ToBoolean(sonuc);
-            }
+            });
         }
 
         private static int DinamikInsert(SqlConnection conn, SqlTransaction tran, string tablo, Dictionary<string, object> kolonlar, bool identityGeriDonus)
@@ -333,24 +456,33 @@ WHERE t.name = @tablo AND c.name = @kolon";
 
         public static DataTable DepolariGetir()
         {
-            try
+            return SqlHataSarmala(() =>
             {
-                return SorguCalistirDataTable("SELECT sDepo, nFirmaID FROM tbDepo ORDER BY sDepo");
-            }
-            catch
-            {
-                DataTable dt = new DataTable();
-                dt.Columns.Add("sDepo", typeof(string));
-                dt.Columns.Add("nFirmaID", typeof(int));
-                dt.Rows.Add(Ayarlar.DepoKodu ?? string.Empty, 1);
-                return dt;
-            }
+                try
+                {
+                    return SorguCalistirDataTable("SELECT sDepo, nFirmaID FROM tbDepo ORDER BY sDepo");
+                }
+                catch (SqlException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    DataTable dt = new DataTable();
+                    dt.Columns.Add("sDepo", typeof(string));
+                    dt.Columns.Add("nFirmaID", typeof(int));
+                    dt.Rows.Add(Ayarlar.DepoKodu ?? string.Empty, 1);
+                    return dt;
+                }
+            });
         }
 
         public static DataTable StokDurumuGetir(string arama, string barkod, string depo, string stokDurum, int kritikEsik, int sayfa, int sayfaBoyutu = 50)
         {
-            int offset = Math.Max(0, sayfa - 1) * sayfaBoyutu;
-            string sql = @"
+            return SqlHataSarmala(() =>
+            {
+                int offset = Math.Max(0, sayfa - 1) * sayfaBoyutu;
+                string sql = @"
 WITH StokListe AS (
     SELECT s.nStokID,
            s.sKodu,
@@ -380,82 +512,85 @@ WHERE (@stokDurum = 'hepsi'
 ORDER BY nStokID
 OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
 
-            return SorguCalistirDataTable(
-                sql,
-                Parametre("@arama", string.IsNullOrWhiteSpace(arama) ? null : arama),
-                Parametre("@barkod", string.IsNullOrWhiteSpace(barkod) ? null : barkod),
-                Parametre("@depo", string.IsNullOrWhiteSpace(depo) ? null : depo),
-                Parametre("@stokDurum", (stokDurum ?? "hepsi").ToLowerInvariant()),
-                Parametre("@kritikEsik", kritikEsik),
-                Parametre("@offset", offset),
-                Parametre("@sayfaBoyutu", sayfaBoyutu)
-            );
+                return SorguCalistirDataTable(
+                    sql,
+                    Parametre("@arama", string.IsNullOrWhiteSpace(arama) ? null : arama),
+                    Parametre("@barkod", string.IsNullOrWhiteSpace(barkod) ? null : barkod),
+                    Parametre("@depo", string.IsNullOrWhiteSpace(depo) ? null : depo),
+                    Parametre("@stokDurum", (stokDurum ?? "hepsi").ToLowerInvariant()),
+                    Parametre("@kritikEsik", kritikEsik),
+                    Parametre("@offset", offset),
+                    Parametre("@sayfaBoyutu", sayfaBoyutu)
+                );
+            });
         }
 
         public static DataTable StokHareketleriGetir(int stokId, string depo, DateTime? baslangic, DateTime? bitis, int sayfa, int sayfaBoyutu = 100)
         {
-            int offset = Math.Max(0, sayfa - 1) * sayfaBoyutu;
-            using (SqlConnection conn = BaglantiOlustur())
+            return SqlHataSarmala(() =>
             {
-                conn.Open();
-                using (SqlCommand cmd = new SqlCommand())
+                int offset = Math.Max(0, sayfa - 1) * sayfaBoyutu;
+                using (SqlConnection conn = BaglantiOlustur())
                 {
-                    cmd.Connection = conn;
-
-                    HashSet<string> detayKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiDetayi");
-                    HashSet<string> masterKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiMaster");
-
-                    string tarihKolon = null;
-                    if (detayKolonlar.Contains("dteFisTarihi"))
+                    conn.Open();
+                    using (SqlCommand cmd = new SqlCommand())
                     {
-                        tarihKolon = "d.dteFisTarihi";
-                    }
-                    else if (detayKolonlar.Contains("dteIslemTarihi"))
-                    {
-                        tarihKolon = "d.dteIslemTarihi";
-                    }
-                    else if (masterKolonlar.Contains("dteFisTarihi"))
-                    {
-                        tarihKolon = "m.dteFisTarihi";
-                    }
+                        cmd.Connection = conn;
 
-                    string tarihSecim = tarihKolon ?? "NULL";
-                    string girisCikis = detayKolonlar.Contains("nGirisCikis") ? "d.nGirisCikis" : "NULL";
-                    string girisMiktar = detayKolonlar.Contains("lGirisMiktar1") ? "d.lGirisMiktar1" : "NULL";
-                    string cikisMiktar = detayKolonlar.Contains("lCikisMiktar1") ? "d.lCikisMiktar1" : "NULL";
-                    string birimFiyat = detayKolonlar.Contains("lCikisFiyat") ? "d.lCikisFiyat" :
-                        (detayKolonlar.Contains("lBrutFiyat") ? "d.lBrutFiyat" : "NULL");
-                    string tutar = detayKolonlar.Contains("lCikisTutar") ? "d.lCikisTutar" :
-                        (detayKolonlar.Contains("lBrutTutar") ? "d.lBrutTutar" : "NULL");
-                    string aciklama = detayKolonlar.Contains("sAciklama") ? "d.sAciklama" : "NULL";
-                    string fisTipi = detayKolonlar.Contains("sFisTipi") ? "d.sFisTipi" : "NULL";
-                    string fisNo = masterKolonlar.Contains("lFisNo") ? "m.lFisNo" : "NULL";
+                        HashSet<string> detayKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiDetayi");
+                        HashSet<string> masterKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiMaster");
 
-                    List<string> filtreler = new List<string> { "d.nStokID = @stokId" };
-                    if (detayKolonlar.Contains("sDepo") && !string.IsNullOrWhiteSpace(depo))
-                    {
-                        filtreler.Add("d.sDepo = @depo");
-                        cmd.Parameters.AddWithValue("@depo", depo);
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(tarihKolon))
-                    {
-                        if (baslangic.HasValue)
+                        string tarihKolon = null;
+                        if (detayKolonlar.Contains("dteFisTarihi"))
                         {
-                            filtreler.Add($"{tarihKolon} >= @baslangic");
-                            cmd.Parameters.AddWithValue("@baslangic", baslangic.Value.Date);
+                            tarihKolon = "d.dteFisTarihi";
                         }
-                        if (bitis.HasValue)
+                        else if (detayKolonlar.Contains("dteIslemTarihi"))
                         {
-                            filtreler.Add($"{tarihKolon} <= @bitis");
-                            cmd.Parameters.AddWithValue("@bitis", bitis.Value.Date.AddDays(1).AddSeconds(-1));
+                            tarihKolon = "d.dteIslemTarihi";
                         }
-                    }
+                        else if (masterKolonlar.Contains("dteFisTarihi"))
+                        {
+                            tarihKolon = "m.dteFisTarihi";
+                        }
 
-                    string orderBy = !string.IsNullOrWhiteSpace(tarihKolon) ? $"{tarihKolon} DESC" :
-                        (detayKolonlar.Contains("nIslemID") ? "d.nIslemID DESC" : "d.nStokID DESC");
+                        string tarihSecim = tarihKolon ?? "NULL";
+                        string girisCikis = detayKolonlar.Contains("nGirisCikis") ? "d.nGirisCikis" : "NULL";
+                        string girisMiktar = detayKolonlar.Contains("lGirisMiktar1") ? "d.lGirisMiktar1" : "NULL";
+                        string cikisMiktar = detayKolonlar.Contains("lCikisMiktar1") ? "d.lCikisMiktar1" : "NULL";
+                        string birimFiyat = detayKolonlar.Contains("lCikisFiyat") ? "d.lCikisFiyat" :
+                            (detayKolonlar.Contains("lBrutFiyat") ? "d.lBrutFiyat" : "NULL");
+                        string tutar = detayKolonlar.Contains("lCikisTutar") ? "d.lCikisTutar" :
+                            (detayKolonlar.Contains("lBrutTutar") ? "d.lBrutTutar" : "NULL");
+                        string aciklama = detayKolonlar.Contains("sAciklama") ? "d.sAciklama" : "NULL";
+                        string fisTipi = detayKolonlar.Contains("sFisTipi") ? "d.sFisTipi" : "NULL";
+                        string fisNo = masterKolonlar.Contains("lFisNo") ? "m.lFisNo" : "NULL";
 
-                    string sql = $@"
+                        List<string> filtreler = new List<string> { "d.nStokID = @stokId" };
+                        if (detayKolonlar.Contains("sDepo") && !string.IsNullOrWhiteSpace(depo))
+                        {
+                            filtreler.Add("d.sDepo = @depo");
+                            cmd.Parameters.AddWithValue("@depo", depo);
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(tarihKolon))
+                        {
+                            if (baslangic.HasValue)
+                            {
+                                filtreler.Add($"{tarihKolon} >= @baslangic");
+                                cmd.Parameters.AddWithValue("@baslangic", baslangic.Value.Date);
+                            }
+                            if (bitis.HasValue)
+                            {
+                                filtreler.Add($"{tarihKolon} <= @bitis");
+                                cmd.Parameters.AddWithValue("@bitis", bitis.Value.Date.AddDays(1).AddSeconds(-1));
+                            }
+                        }
+
+                        string orderBy = !string.IsNullOrWhiteSpace(tarihKolon) ? $"{tarihKolon} DESC" :
+                            (detayKolonlar.Contains("nIslemID") ? "d.nIslemID DESC" : "d.nStokID DESC");
+
+                        string sql = $@"
 SELECT {tarihSecim} AS Tarih,
        {girisCikis} AS GirisCikis,
        {girisMiktar} AS GirisMiktar1,
@@ -471,19 +606,20 @@ WHERE {string.Join(" AND ", filtreler)}
 ORDER BY {orderBy}
 OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
 
-                    cmd.CommandText = sql;
-                    cmd.Parameters.AddWithValue("@stokId", stokId);
-                    cmd.Parameters.AddWithValue("@offset", offset);
-                    cmd.Parameters.AddWithValue("@sayfaBoyutu", sayfaBoyutu);
+                        cmd.CommandText = sql;
+                        cmd.Parameters.AddWithValue("@stokId", stokId);
+                        cmd.Parameters.AddWithValue("@offset", offset);
+                        cmd.Parameters.AddWithValue("@sayfaBoyutu", sayfaBoyutu);
 
-                    using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
-                    {
-                        DataTable dt = new DataTable();
-                        adapter.Fill(dt);
-                        return dt;
+                        using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                        {
+                            DataTable dt = new DataTable();
+                            adapter.Fill(dt);
+                            return dt;
+                        }
                     }
                 }
-            }
+            });
         }
 
         public static int StokFisiOlustur(int girisCikis, string fisTipi, string depo, int? firmaId, string aciklama, List<(int stokId, decimal miktar, decimal? birimFiyat, string satirAciklama)> kalemler)
@@ -677,28 +813,30 @@ OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
 
         public static DataSet UrunDetayGetir(int stokId)
         {
-            string sql = @"
+            return OkumaIslem((conn, tran) =>
+            {
+                string sql = @"
 SELECT * FROM tbStok WHERE nStokID = @stokId;
 SELECT sBarkod FROM tbStokBarkodu WHERE nStokID = @stokId ORDER BY sBarkod;
 SELECT sFiyatTipi, lFiyat FROM tbStokFiyati WHERE nStokID = @stokId;
 SELECT SUM(ISNULL(lGirisMiktar1,0)) - SUM(ISNULL(lCikisMiktar1,0)) AS StokMiktari
 FROM tbStokFisiDetayi WHERE nStokID = @stokId;";
 
-            using (SqlConnection conn = BaglantiOlustur())
-            using (SqlCommand cmd = new SqlCommand(sql, conn))
-            {
-                cmd.Parameters.AddWithValue("@stokId", stokId);
-                using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
                 {
-                    DataSet ds = new DataSet();
-                    adapter.Fill(ds);
-                    ds.Tables[0].TableName = "Urun";
-                    ds.Tables[1].TableName = "Barkodlar";
-                    ds.Tables[2].TableName = "Fiyatlar";
-                    ds.Tables[3].TableName = "Stok";
-                    return ds;
+                    cmd.Parameters.AddWithValue("@stokId", stokId);
+                    using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+                    {
+                        DataSet ds = new DataSet();
+                        adapter.Fill(ds);
+                        ds.Tables[0].TableName = "Urun";
+                        ds.Tables[1].TableName = "Barkodlar";
+                        ds.Tables[2].TableName = "Fiyatlar";
+                        ds.Tables[3].TableName = "Stok";
+                        return ds;
+                    }
                 }
-            }
+            });
         }
 
         public static bool BarkodVarMi(string barkod, int? stokId)
@@ -1040,23 +1178,31 @@ FROM (
 
        public static DataTable GunSatisOzeti()
        {
-           string sql = @"
+           return OkumaIslem((conn, tran) =>
+           {
+               string sql = @"
 SELECT CAST(GETDATE() AS date) AS Tarih,
        SUM(ISNULL(lToplamTutar, 0)) AS ToplamTutar,
        SUM(ISNULL(lToplamKdv, 0)) AS ToplamKdv,
        COUNT(1) AS SatisAdedi
 FROM tbAlisVeris
 WHERE CAST(dteFisTarihi AS date) = CAST(GETDATE() AS date);";
-           return SorguCalistirDataTable(sql);
+               using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
+               using (SqlDataAdapter adapter = new SqlDataAdapter(cmd))
+               {
+                   DataTable dt = new DataTable();
+                   adapter.Fill(dt);
+                   return dt;
+               }
+           });
        }
 
         public static DataTable SatisRaporuGetir(DateTime baslangic, DateTime bitis, string odemeSekli, string kasiyerRumuzu)
         {
-            using (SqlConnection conn = BaglantiOlustur())
+            return OkumaIslem((conn, tran) =>
             {
-                conn.Open();
-                HashSet<string> alisKolonlar = TabloKolonlariniGetir(conn, null, "tbAlisVeris");
-                HashSet<string> odemeKolonlar = TabloKolonlariniGetir(conn, null, "tbOdeme");
+                HashSet<string> alisKolonlar = TabloKolonlariniGetir(conn, tran, "tbAlisVeris");
+                HashSet<string> odemeKolonlar = TabloKolonlariniGetir(conn, tran, "tbOdeme");
 
                 string tarihKolon = IlkKolonuBul(alisKolonlar, "dteFaturaTarihi", "dteFisTarihi", "dteKayitTarihi", "dteIslemTarihi");
                 if (string.IsNullOrWhiteSpace(tarihKolon))
@@ -1123,17 +1269,16 @@ WHERE a.{tarihKolon} BETWEEN @baslangic AND @bitis");
                 }
 
                 sql.Append($" GROUP BY CAST(a.{tarihKolon} AS date) ORDER BY CAST(a.{tarihKolon} AS date)");
-                return SorguCalistirDataTable(sql.ToString(), parametreler.ToArray());
-            }
+                return SorguCalistirDataTable(conn, tran, sql.ToString(), parametreler.ToArray());
+            });
         }
 
         public static DataTable KdvRaporuGetir(DateTime baslangic, DateTime bitis)
         {
-            using (SqlConnection conn = BaglantiOlustur())
+            return OkumaIslem((conn, tran) =>
             {
-                conn.Open();
-                HashSet<string> alisKolonlar = TabloKolonlariniGetir(conn, null, "tbAlisVeris");
-                HashSet<string> siparisKolonlar = TabloKolonlariniGetir(conn, null, "tbAlisverisSiparis");
+                HashSet<string> alisKolonlar = TabloKolonlariniGetir(conn, tran, "tbAlisVeris");
+                HashSet<string> siparisKolonlar = TabloKolonlariniGetir(conn, tran, "tbAlisverisSiparis");
 
                 string tarihKolon = IlkKolonuBul(alisKolonlar, "dteFaturaTarihi", "dteFisTarihi", "dteKayitTarihi", "dteIslemTarihi");
                 if (string.IsNullOrWhiteSpace(tarihKolon))
@@ -1179,7 +1324,7 @@ FROM (
 ) x
 GROUP BY KdvOrani
 ORDER BY KdvOrani";
-                    return SorguCalistirDataTable(sql, Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
+                    return SorguCalistirDataTable(conn, tran, sql, Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
                 }
 
                 string kdvOraniKolon = IlkKolonuBul(siparisKolonlar, "lKdvOrani", "nKdvOrani");
@@ -1203,17 +1348,16 @@ WHERE a.{tarihKolon} BETWEEN @baslangic AND @bitis
 GROUP BY d.{kdvOraniKolon}
 ORDER BY d.{kdvOraniKolon}";
 
-                return SorguCalistirDataTable(detaySql, Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
-            }
+                return SorguCalistirDataTable(conn, tran, detaySql, Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
+            });
         }
 
         public static DataTable EnCokSatanlarGetir(DateTime baslangic, DateTime bitis, int topN = 20, string siralama = "adet")
         {
-            using (SqlConnection conn = BaglantiOlustur())
+            return OkumaIslem((conn, tran) =>
             {
-                conn.Open();
-                HashSet<string> detayKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiDetayi");
-                HashSet<string> masterKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiMaster");
+                HashSet<string> detayKolonlar = TabloKolonlariniGetir(conn, tran, "tbStokFisiDetayi");
+                HashSet<string> masterKolonlar = TabloKolonlariniGetir(conn, tran, "tbStokFisiMaster");
 
                 string tarihKolon = IlkKolonuBul(masterKolonlar, "dteFisTarihi", "dteIslemTarihi");
                 string adetKolon = IlkKolonuBul(detayKolonlar, "lCikisMiktar1", "lMiktar");
@@ -1239,21 +1383,22 @@ GROUP BY d.nStokID, s.sKodu, s.sAciklama
 ORDER BY {(siralama == "tutar" ? "ToplamTutar" : "ToplamAdet")} DESC";
 
                 return SorguCalistirDataTable(
+                    conn,
+                    tran,
                     sql,
                     Parametre("@topN", topN),
                     Parametre("@baslangic", baslangic),
                     Parametre("@bitis", bitis)
                 );
-            }
+            });
         }
 
         public static DataTable UrunSatisPerformansGetir(int stokId, DateTime baslangic, DateTime bitis)
         {
-            using (SqlConnection conn = BaglantiOlustur())
+            return OkumaIslem((conn, tran) =>
             {
-                conn.Open();
-                HashSet<string> detayKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiDetayi");
-                HashSet<string> masterKolonlar = TabloKolonlariniGetir(conn, null, "tbStokFisiMaster");
+                HashSet<string> detayKolonlar = TabloKolonlariniGetir(conn, tran, "tbStokFisiDetayi");
+                HashSet<string> masterKolonlar = TabloKolonlariniGetir(conn, tran, "tbStokFisiMaster");
 
                 string tarihKolon = IlkKolonuBul(masterKolonlar, "dteFisTarihi", "dteIslemTarihi");
                 string adetKolon = IlkKolonuBul(detayKolonlar, "lCikisMiktar1", "lMiktar");
@@ -1276,21 +1421,22 @@ GROUP BY CAST(m.{tarihKolon} AS date)
 ORDER BY CAST(m.{tarihKolon} AS date)";
 
                 return SorguCalistirDataTable(
+                    conn,
+                    tran,
                     sql,
                     Parametre("@stokId", stokId),
                     Parametre("@baslangic", baslangic),
                     Parametre("@bitis", bitis)
                 );
-            }
+            });
         }
 
         public static DataTable VeresiyeRaporuGetir(DateTime baslangic, DateTime bitis)
         {
-            using (SqlConnection conn = BaglantiOlustur())
+            return OkumaIslem((conn, tran) =>
             {
-                conn.Open();
-                HashSet<string> alisKolonlar = TabloKolonlariniGetir(conn, null, "tbAlisVeris");
-                HashSet<string> odemeKolonlar = TabloKolonlariniGetir(conn, null, "tbOdeme");
+                HashSet<string> alisKolonlar = TabloKolonlariniGetir(conn, tran, "tbAlisVeris");
+                HashSet<string> odemeKolonlar = TabloKolonlariniGetir(conn, tran, "tbOdeme");
 
                 string tarihKolon = IlkKolonuBul(alisKolonlar, "dteFaturaTarihi", "dteFisTarihi", "dteKayitTarihi", "dteIslemTarihi");
                 string netKolon = IlkKolonuBul(alisKolonlar, "lNetTutar", "lToplamTutar", "lTutar");
@@ -1345,16 +1491,15 @@ INNER JOIN tbMusteri m ON m.nMusteriID = x.nMusteriID
 GROUP BY m.nMusteriID, m.sAdi, m.sSoyadi
 ORDER BY NetBakiye DESC");
 
-                return SorguCalistirDataTable(sql.ToString(), Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
-            }
+                return SorguCalistirDataTable(conn, tran, sql.ToString(), Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
+            });
         }
 
         public static DataTable KasaRaporuGetir(DateTime baslangic, DateTime bitis)
         {
-            using (SqlConnection conn = BaglantiOlustur())
+            return OkumaIslem((conn, tran) =>
             {
-                conn.Open();
-                HashSet<string> odemeKolonlar = TabloKolonlariniGetir(conn, null, "tbOdeme");
+                HashSet<string> odemeKolonlar = TabloKolonlariniGetir(conn, tran, "tbOdeme");
                 string tarihKolon = IlkKolonuBul(odemeKolonlar, "dteOdemeTarihi", "dteTarih", "dTarih");
                 string tipKolon = IlkKolonuBul(odemeKolonlar, "sOdemeSekli", "sOdemeTipi");
                 string tutarKolon = IlkKolonuBul(odemeKolonlar, "lTutar", "nTutar");
@@ -1374,8 +1519,8 @@ WHERE o.{tarihKolon} BETWEEN @baslangic AND @bitis
 GROUP BY CAST(o.{tarihKolon} AS date)
 ORDER BY CAST(o.{tarihKolon} AS date)";
 
-                return SorguCalistirDataTable(sql, Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
-            }
+                return SorguCalistirDataTable(conn, tran, sql, Parametre("@baslangic", baslangic), Parametre("@bitis", bitis));
+            });
         }
 
         public static DataTable UrunAra(string arama)
@@ -1495,17 +1640,39 @@ WHERE b.sBarkod = @barkod";
                 Dictionary<string, object> master = new Dictionary<string, object>
                 {
                     ["nAlisverisID"] = satisId,
+                    // S7-FIX: Çıkış = Satış
+                    ["nGirisCikis"] = 2,
                     ["dteFisTarihi"] = DateTime.Now,
+                    ["dteKayitTarihi"] = DateTime.Now,
+                    ["dteFaturaTarihi"] = DateTime.Now,
                     ["lToplamTutar"] = netToplam,
                     ["lNetTutar"] = netToplam,
                     ["lToplamKdv"] = kdvToplam,
                     ["lMalBedeli"] = brutToplam,
                     ["lIndirimTutar"] = iskontoToplam,
-                    ["sFisTipi"] = odemeTipi,
+                    // S7-FIX: Nebim uyumlu fiş tipi
+                    ["sFisTipi"] = odemeTipi == "Veresiye" ? "KR" : "PS",
+                    ["lMalIskontoTutari"] = satirlar.Sum(s => s.SatirIskonto),
+                    ["lDipIskontoTutari"] = satirlar.Sum(s => s.DipIskonto),
                     ["nMusteriID"] = musteriId,
                     ["sDepo"] = Ayarlar.DepoKodu,
                     ["sKasiyer"] = Ayarlar.KasiyerRumuzu
                 };
+
+                // S7-FIX: KDV dağılımını master'a yaz
+                var kdvDagitim = Yardimcilar.KdvDagit(satirlar.Select(s => (s.NetTutar, s.KdvOrani)));
+                int kdvIdx = 1;
+                foreach (var kvp in kdvDagitim.OrderByDescending(k => k.Value.Matrah))
+                {
+                    if (kdvIdx > 5)
+                    {
+                        break;
+                    }
+                    master[$"nKdvOrani{kdvIdx}"] = kvp.Key;
+                    master[$"lKdvMatrahi{kdvIdx}"] = kvp.Value.Matrah;
+                    master[$"lKdv{kdvIdx}"] = kvp.Value.Kdv;
+                    kdvIdx++;
+                }
 
                 if (alisVerisIdentity && alisVerisKolonlar.Contains("nAlisverisID"))
                 {
@@ -1563,6 +1730,20 @@ WHERE b.sBarkod = @barkod";
                     ["sAciklama"] = "Satış fişi",
                     ["nAlisverisID"] = satisId
                 };
+
+                // S7-FIX: KDV dağılımını stok master'a yaz
+                kdvIdx = 1;
+                foreach (var kvp in kdvDagitim.OrderByDescending(k => k.Value.Matrah))
+                {
+                    if (kdvIdx > 5)
+                    {
+                        break;
+                    }
+                    stokMaster[$"nKdvOrani{kdvIdx}"] = kvp.Key;
+                    stokMaster[$"lKdvMatrahi{kdvIdx}"] = kvp.Value.Matrah;
+                    stokMaster[$"lKdv{kdvIdx}"] = kvp.Value.Kdv;
+                    kdvIdx++;
+                }
 
                 if (stokMasterIdentity && stokMasterKolonlar.Contains("nStokFisiID"))
                 {
@@ -2253,33 +2434,36 @@ WHERE TABLE_NAME = @tablo";
 
         public static bool CariIslemDestekleniyor()
         {
-            using (SqlConnection conn = BaglantiOlustur())
-            {
-                conn.Open();
-                return CariIslemBilgileriniGetir(conn, null).Destekli;
-            }
+            return OkumaIslem((conn, tran) => CariIslemBilgileriniGetir(conn, tran).Destekli);
         }
 
         public static int MusteriSayisiGetir(string arama)
         {
-            const string sql = @"SELECT COUNT(1)
+            return OkumaIslem((conn, tran) =>
+            {
+                const string sql = @"SELECT COUNT(1)
 FROM tbMusteri
 WHERE (@arama IS NULL OR @arama = ''
     OR sAdi LIKE @arama + '%'
     OR sSoyadi LIKE @arama + '%'
     OR sVergiNo LIKE @arama + '%'
     OR sEmail LIKE @arama + '%')";
-            object sonuc = SorguCalistirScalar(
-                sql,
-                Parametre("@arama", string.IsNullOrWhiteSpace(arama) ? null : arama)
-            );
-            return sonuc == null || sonuc == DBNull.Value ? 0 : Convert.ToInt32(sonuc);
+                object sonuc = SorguCalistirScalar(
+                    conn,
+                    tran,
+                    sql,
+                    Parametre("@arama", string.IsNullOrWhiteSpace(arama) ? null : arama)
+                );
+                return sonuc == null || sonuc == DBNull.Value ? 0 : Convert.ToInt32(sonuc);
+            });
         }
 
         public static DataTable MusterileriGetir(string arama, int sayfa = 0, int sayfaBoyutu = 50)
         {
-            int offset = Math.Max(0, sayfa) * sayfaBoyutu;
-            const string sql = @"
+            return OkumaIslem((conn, tran) =>
+            {
+                int offset = Math.Max(0, sayfa) * sayfaBoyutu;
+                const string sql = @"
 SELECT nMusteriID,
        sAdi,
        sSoyadi,
@@ -2295,19 +2479,25 @@ WHERE (@arama IS NULL OR @arama = ''
 ORDER BY nMusteriID DESC
 OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
 
-            return SorguCalistirDataTable(
-                sql,
-                Parametre("@arama", string.IsNullOrWhiteSpace(arama) ? null : arama),
-                Parametre("@offset", offset),
-                Parametre("@sayfaBoyutu", sayfaBoyutu)
-            );
+                return SorguCalistirDataTable(
+                    conn,
+                    tran,
+                    sql,
+                    Parametre("@arama", string.IsNullOrWhiteSpace(arama) ? null : arama),
+                    Parametre("@offset", offset),
+                    Parametre("@sayfaBoyutu", sayfaBoyutu)
+                );
+            });
         }
 
         public static DataRow MusteriDetayGetir(int musteriId)
         {
-            const string sql = @"SELECT TOP 1 * FROM tbMusteri WHERE nMusteriID = @id";
-            DataTable dt = SorguCalistirDataTable(sql, Parametre("@id", musteriId));
-            return dt.Rows.Count > 0 ? dt.Rows[0] : null;
+            return OkumaIslem((conn, tran) =>
+            {
+                const string sql = @"SELECT TOP 1 * FROM tbMusteri WHERE nMusteriID = @id";
+                DataTable dt = SorguCalistirDataTable(conn, tran, sql, Parametre("@id", musteriId));
+                return dt.Rows.Count > 0 ? dt.Rows[0] : null;
+            });
         }
 
         public static int MusteriEkle(
@@ -2433,7 +2623,7 @@ OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
 
         public static decimal MusteriVeresiyeBakiyeGetir(int musteriId, DateTime? bas = null, DateTime? bit = null)
         {
-            return TransactionCalistir((conn, tran) =>
+            return OkumaIslem((conn, tran) =>
             {
                 HashSet<string> kolonlar = TabloKolonlariniGetir(conn, tran, "tbAlisVeris");
                 string tarihKolon = IlkKolonuBul(kolonlar, "dTarih", "dteFisTarihi", "dteIslemTarihi");
@@ -2532,7 +2722,7 @@ OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
 
         public static DataTable MusteriEkstreGetir(int musteriId, DateTime bas, DateTime bit)
         {
-            return TransactionCalistir((conn, tran) =>
+            return OkumaIslem((conn, tran) =>
             {
                 DataTable sonuc = new DataTable();
                 sonuc.Columns.Add("Tarih", typeof(DateTime));
