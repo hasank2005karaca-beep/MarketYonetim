@@ -38,6 +38,8 @@ namespace MarketYonetim
 
         private void InitializeComponent()
         {
+            // S7-FIX: DPI ölçekleme
+            AutoScaleMode = AutoScaleMode.Dpi;
             Text = "👤 Müşteri Yönetimi";
             Size = new Size(1200, 720);
             StartPosition = FormStartPosition.CenterScreen;
@@ -91,6 +93,8 @@ namespace MarketYonetim
             };
             dgvMusteriler.SelectionChanged += DgvMusteriler_SelectionChanged;
             dgvMusteriler.CellDoubleClick += DgvMusteriler_CellDoubleClick;
+            // S7-FIX: Grid flicker azaltma
+            Yardimcilar.DoubleBufferedAktifEt(dgvMusteriler);
 
             panelSol.Controls.Add(dgvMusteriler);
 
@@ -343,6 +347,7 @@ namespace MarketYonetim
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Hata: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -396,6 +401,7 @@ namespace MarketYonetim
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Hata: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -443,6 +449,7 @@ namespace MarketYonetim
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Hata: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -476,6 +483,7 @@ namespace MarketYonetim
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Hata: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -511,82 +519,98 @@ namespace MarketYonetim
 
         private void BtnTahsilat_Click(object sender, EventArgs e)
         {
-            if (seciliMusteriId <= 0)
+            try
             {
-                MessageBox.Show("Tahsilat için müşteri seçilmedi.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            string musteriAdi = string.Format("{0} {1}", txtAdi.Text.Trim(), txtSoyadi.Text.Trim()).Trim();
-            using (FormVeresiyeOdemeAl form = new FormVeresiyeOdemeAl(seciliMusteriId, musteriAdi))
-            {
-                if (form.ShowDialog() == DialogResult.OK)
+                if (seciliMusteriId <= 0)
                 {
-                    YukleListe();
+                    MessageBox.Show("Tahsilat için müşteri seçilmedi.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
                 }
+
+                string musteriAdi = string.Format("{0} {1}", txtAdi.Text.Trim(), txtSoyadi.Text.Trim()).Trim();
+                using (FormVeresiyeOdemeAl form = new FormVeresiyeOdemeAl(seciliMusteriId, musteriAdi))
+                {
+                    if (form.ShowDialog() == DialogResult.OK)
+                    {
+                        YukleListe();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         private void BtnEkstre_Click(object sender, EventArgs e)
         {
-            if (seciliMusteriId <= 0)
+            try
             {
-                MessageBox.Show("Ekstre için müşteri seçilmedi.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                if (seciliMusteriId <= 0)
+                {
+                    MessageBox.Show("Ekstre için müşteri seçilmedi.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                Form dialog = new Form
+                {
+                    Text = "📄 Ekstre Tarih Aralığı",
+                    Size = new Size(360, 220),
+                    StartPosition = FormStartPosition.CenterParent,
+                    Font = new Font("Segoe UI", 10)
+                };
+
+                DateTimePicker dtBas = new DateTimePicker
+                {
+                    Location = new Point(140, 20),
+                    Width = 160,
+                    Format = DateTimePickerFormat.Short,
+                    Value = DateTime.Today.AddMonths(-1)
+                };
+                DateTimePicker dtBit = new DateTimePicker
+                {
+                    Location = new Point(140, 60),
+                    Width = 160,
+                    Format = DateTimePickerFormat.Short,
+                    Value = DateTime.Today
+                };
+
+                dialog.Controls.Add(new Label { Text = "Başlangıç", Location = new Point(20, 25), AutoSize = true });
+                dialog.Controls.Add(new Label { Text = "Bitiş", Location = new Point(20, 65), AutoSize = true });
+                dialog.Controls.Add(dtBas);
+                dialog.Controls.Add(dtBit);
+
+                Button btnTamam = new Button
+                {
+                    Text = "Göster",
+                    Location = new Point(140, 110),
+                    Width = 80
+                };
+                Button btnIptal = new Button
+                {
+                    Text = "İptal",
+                    Location = new Point(230, 110),
+                    Width = 80
+                };
+                btnTamam.Click += (s, args) =>
+                {
+                    dialog.DialogResult = DialogResult.OK;
+                    dialog.Close();
+                };
+                btnIptal.Click += (s, args) => dialog.Close();
+                dialog.Controls.Add(btnTamam);
+                dialog.Controls.Add(btnIptal);
+
+                if (dialog.ShowDialog() == DialogResult.OK)
+                {
+                    EkstreGoster(dtBas.Value.Date, dtBit.Value.Date);
+                }
             }
-
-            Form dialog = new Form
+            catch (Exception ex)
             {
-                Text = "📄 Ekstre Tarih Aralığı",
-                Size = new Size(360, 220),
-                StartPosition = FormStartPosition.CenterParent,
-                Font = new Font("Segoe UI", 10)
-            };
-
-            DateTimePicker dtBas = new DateTimePicker
-            {
-                Location = new Point(140, 20),
-                Width = 160,
-                Format = DateTimePickerFormat.Short,
-                Value = DateTime.Today.AddMonths(-1)
-            };
-            DateTimePicker dtBit = new DateTimePicker
-            {
-                Location = new Point(140, 60),
-                Width = 160,
-                Format = DateTimePickerFormat.Short,
-                Value = DateTime.Today
-            };
-
-            dialog.Controls.Add(new Label { Text = "Başlangıç", Location = new Point(20, 25), AutoSize = true });
-            dialog.Controls.Add(new Label { Text = "Bitiş", Location = new Point(20, 65), AutoSize = true });
-            dialog.Controls.Add(dtBas);
-            dialog.Controls.Add(dtBit);
-
-            Button btnTamam = new Button
-            {
-                Text = "Göster",
-                Location = new Point(140, 110),
-                Width = 80
-            };
-            Button btnIptal = new Button
-            {
-                Text = "İptal",
-                Location = new Point(230, 110),
-                Width = 80
-            };
-            btnTamam.Click += (s, args) =>
-            {
-                dialog.DialogResult = DialogResult.OK;
-                dialog.Close();
-            };
-            btnIptal.Click += (s, args) => dialog.Close();
-            dialog.Controls.Add(btnTamam);
-            dialog.Controls.Add(btnIptal);
-
-            if (dialog.ShowDialog() == DialogResult.OK)
-            {
-                EkstreGoster(dtBas.Value.Date, dtBit.Value.Date);
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -621,22 +645,46 @@ namespace MarketYonetim
 
         private void BtnYenile_Click(object sender, EventArgs e)
         {
-            YukleListe();
+            try
+            {
+                YukleListe();
+            }
+            catch (Exception ex)
+            {
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void BtnOnceki_Click(object sender, EventArgs e)
         {
-            if (sayfa > 0)
+            try
             {
-                sayfa--;
-                YukleListe();
+                if (sayfa > 0)
+                {
+                    sayfa--;
+                    YukleListe();
+                }
+            }
+            catch (Exception ex)
+            {
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         private void BtnSonraki_Click(object sender, EventArgs e)
         {
-            sayfa++;
-            YukleListe();
+            try
+            {
+                sayfa++;
+                YukleListe();
+            }
+            catch (Exception ex)
+            {
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void FormMusteriYonetimi_KeyDown(object sender, KeyEventArgs e)

@@ -33,6 +33,8 @@ namespace MarketYonetim
 
         private void InitializeComponent()
         {
+            // S7-FIX: DPI ölçekleme
+            AutoScaleMode = AutoScaleMode.Dpi;
             Text = stokId.HasValue ? "✏️ Ürün Düzenle" : "➕ Ürün Ekle";
             Size = new Size(520, 620);
             StartPosition = FormStartPosition.CenterParent;
@@ -218,27 +220,35 @@ namespace MarketYonetim
 
         private void BtnBarkodEkle_Click(object sender, EventArgs e)
         {
-            string barkod = txtBarkod.Text.Trim();
-            if (string.IsNullOrWhiteSpace(barkod))
+            try
             {
-                MessageBox.Show("Barkod boş olamaz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
+                string barkod = txtBarkod.Text.Trim();
+                if (string.IsNullOrWhiteSpace(barkod))
+                {
+                    MessageBox.Show("Barkod boş olamaz.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
 
-            if (lstBarkodlar.Items.Contains(barkod))
+                if (lstBarkodlar.Items.Contains(barkod))
+                {
+                    MessageBox.Show("Bu barkod zaten listede.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (VeriKatmani.BarkodVarMi(barkod, stokId))
+                {
+                    MessageBox.Show("Bu barkod başka bir üründe kullanılıyor.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                lstBarkodlar.Items.Add(barkod);
+                txtBarkod.Clear();
+            }
+            catch (Exception ex)
             {
-                MessageBox.Show("Bu barkod zaten listede.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
-
-            if (VeriKatmani.BarkodVarMi(barkod, stokId))
-            {
-                MessageBox.Show("Bu barkod başka bir üründe kullanılıyor.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            lstBarkodlar.Items.Add(barkod);
-            txtBarkod.Clear();
         }
 
         private void BtnBarkodSil_Click(object sender, EventArgs e)
@@ -253,39 +263,39 @@ namespace MarketYonetim
 
         private void BtnKaydet_Click(object sender, EventArgs e)
         {
-            string kodu = txtKodu.Text.Trim();
-            string aciklama = txtAciklama.Text.Trim();
-            string kisaAdi = txtKisaAdi.Text.Trim();
-            string birim = txtBirim.Text.Trim();
-            string sinif1 = cmbSinif1.SelectedItem?.ToString();
-            string sinif2 = cmbSinif2.SelectedItem?.ToString();
-
-            if (string.IsNullOrWhiteSpace(kodu) || string.IsNullOrWhiteSpace(aciklama) || string.IsNullOrWhiteSpace(birim))
-            {
-                MessageBox.Show("Kodu, ürün adı ve birim zorunludur.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            if (nudFiyat.Value <= 0)
-            {
-                MessageBox.Show("En az bir fiyat girilmelidir.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            if (VeriKatmani.StokKoduVarMi(kodu, stokId))
-            {
-                MessageBox.Show("Bu ürün kodu başka bir üründe kullanılıyor.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            List<string> barkodlar = lstBarkodlar.Items.Cast<string>().ToList();
-            Dictionary<string, decimal> fiyatlar = new Dictionary<string, decimal>
-            {
-                { Ayarlar.VarsayilanFiyatTipi, nudFiyat.Value }
-            };
-
             try
             {
+                string kodu = txtKodu.Text.Trim();
+                string aciklama = txtAciklama.Text.Trim();
+                string kisaAdi = txtKisaAdi.Text.Trim();
+                string birim = txtBirim.Text.Trim();
+                string sinif1 = cmbSinif1.SelectedItem?.ToString();
+                string sinif2 = cmbSinif2.SelectedItem?.ToString();
+
+                if (string.IsNullOrWhiteSpace(kodu) || string.IsNullOrWhiteSpace(aciklama) || string.IsNullOrWhiteSpace(birim))
+                {
+                    MessageBox.Show("Kodu, ürün adı ve birim zorunludur.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (nudFiyat.Value <= 0)
+                {
+                    MessageBox.Show("En az bir fiyat girilmelidir.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (VeriKatmani.StokKoduVarMi(kodu, stokId))
+                {
+                    MessageBox.Show("Bu ürün kodu başka bir üründe kullanılıyor.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                List<string> barkodlar = lstBarkodlar.Items.Cast<string>().ToList();
+                Dictionary<string, decimal> fiyatlar = new Dictionary<string, decimal>
+                {
+                    { Ayarlar.VarsayilanFiyatTipi, nudFiyat.Value }
+                };
+
                 if (stokId.HasValue)
                 {
                     VeriKatmani.UrunGuncelle(stokId.Value, kodu, aciklama, kisaAdi, birim, sinif1, sinif2, barkodlar, fiyatlar);
@@ -299,6 +309,7 @@ namespace MarketYonetim
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Kayıt sırasında hata oluştu. Detay: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }

@@ -47,6 +47,8 @@ namespace MarketYonetim
 
         private void InitializeComponent()
         {
+            // S7-FIX: DPI ölçekleme
+            AutoScaleMode = AutoScaleMode.Dpi;
             Text = "📦 Ürün Yönetimi";
             Size = new Size(1350, 780);
             StartPosition = FormStartPosition.CenterParent;
@@ -130,6 +132,7 @@ namespace MarketYonetim
             dgvUrunler.DataBindingComplete += (s, e) => dgvUrunler.ClearSelection();
             dgvUrunler.SelectionChanged += DgvUrunler_SelectionChanged;
             dgvUrunler.ColumnHeaderMouseClick += DgvUrunler_ColumnHeaderMouseClick;
+            // S7-FIX: Grid flicker azaltma
             Yardimcilar.DoubleBufferedAktifEt(dgvUrunler);
 
             dgvUrunler.Columns.Add(new DataGridViewTextBoxColumn { Name = "ID", DataPropertyName = "nStokID", Visible = false });
@@ -167,6 +170,8 @@ namespace MarketYonetim
                 AutoGenerateColumns = false,
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect
             };
+            // S7-FIX: Grid flicker azaltma
+            Yardimcilar.DoubleBufferedAktifEt(dgvFiyatlar);
             dgvFiyatlar.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Fiyat Tipi", DataPropertyName = "sFiyatTipi", Width = 100 });
             dgvFiyatlar.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Fiyat", DataPropertyName = "lFiyat", Width = 100, DefaultCellStyle = new DataGridViewCellStyle { Format = "N2" } });
 
@@ -471,30 +476,46 @@ namespace MarketYonetim
 
         private void BtnEkle_Click(object sender, EventArgs e)
         {
-            using (FormUrunDuzenle form = new FormUrunDuzenle())
+            try
             {
-                if (form.ShowDialog(this) == DialogResult.OK)
+                using (FormUrunDuzenle form = new FormUrunDuzenle())
                 {
-                    sayfa = 1;
-                    UrunleriYukle();
+                    if (form.ShowDialog(this) == DialogResult.OK)
+                    {
+                        sayfa = 1;
+                        UrunleriYukle();
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         private void BtnDuzenle_Click(object sender, EventArgs e)
         {
-            if (!seciliStokId.HasValue)
+            try
             {
-                MessageBox.Show("Lütfen düzenlenecek ürünü seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            using (FormUrunDuzenle form = new FormUrunDuzenle(seciliStokId.Value))
-            {
-                if (form.ShowDialog(this) == DialogResult.OK)
+                if (!seciliStokId.HasValue)
                 {
-                    UrunleriYukle();
+                    MessageBox.Show("Lütfen düzenlenecek ürünü seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
                 }
+
+                using (FormUrunDuzenle form = new FormUrunDuzenle(seciliStokId.Value))
+                {
+                    if (form.ShowDialog(this) == DialogResult.OK)
+                    {
+                        UrunleriYukle();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -524,37 +545,54 @@ namespace MarketYonetim
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Silme işlemi sırasında hata oluştu. Detay: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         private void BtnBarkod_Click(object sender, EventArgs e)
         {
-            if (!seciliStokId.HasValue)
+            try
             {
-                MessageBox.Show("Lütfen barkod yönetimi için ürün seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
+                if (!seciliStokId.HasValue)
+                {
+                    MessageBox.Show("Lütfen barkod yönetimi için ürün seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
 
-            using (FormBarkodYonetimi form = new FormBarkodYonetimi(seciliStokId.Value))
+                using (FormBarkodYonetimi form = new FormBarkodYonetimi(seciliStokId.Value))
+                {
+                    form.ShowDialog(this);
+                    UrunDetayYukle(seciliStokId.Value);
+                }
+            }
+            catch (Exception ex)
             {
-                form.ShowDialog(this);
-                UrunDetayYukle(seciliStokId.Value);
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         private void BtnFiyat_Click(object sender, EventArgs e)
         {
-            if (!seciliStokId.HasValue)
+            try
             {
-                MessageBox.Show("Lütfen fiyat yönetimi için ürün seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
+                if (!seciliStokId.HasValue)
+                {
+                    MessageBox.Show("Lütfen fiyat yönetimi için ürün seçin.", "Bilgi", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
 
-            using (FormFiyatDuzenle form = new FormFiyatDuzenle(seciliStokId.Value))
+                using (FormFiyatDuzenle form = new FormFiyatDuzenle(seciliStokId.Value))
+                {
+                    form.ShowDialog(this);
+                    UrunDetayYukle(seciliStokId.Value);
+                }
+            }
+            catch (Exception ex)
             {
-                form.ShowDialog(this);
-                UrunDetayYukle(seciliStokId.Value);
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

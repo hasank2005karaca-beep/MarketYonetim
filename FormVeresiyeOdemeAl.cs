@@ -22,6 +22,8 @@ namespace MarketYonetim
 
         private void InitializeComponent()
         {
+            // S7-FIX: DPI ölçekleme
+            AutoScaleMode = AutoScaleMode.Dpi;
             Text = "💳 Veresiye Tahsilat";
             Size = new Size(420, 320);
             StartPosition = FormStartPosition.CenterParent;
@@ -160,6 +162,7 @@ namespace MarketYonetim
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Hata: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }

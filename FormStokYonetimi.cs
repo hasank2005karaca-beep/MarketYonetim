@@ -67,6 +67,8 @@ namespace MarketYonetim
 
         private void InitializeComponent()
         {
+            // S7-FIX: DPI ölçekleme
+            AutoScaleMode = AutoScaleMode.Dpi;
             Text = "📋 Stok Yönetimi";
             Size = new Size(1350, 800);
             StartPosition = FormStartPosition.CenterParent;
@@ -86,7 +88,18 @@ namespace MarketYonetim
             cmbDepo.SelectedIndexChanged += (s, e) => GenelYenile();
 
             btnGenelYenile = new Button { Text = "Yenile (F5)", Width = 120, BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White };
-            btnGenelYenile.Click += (s, e) => GenelYenile();
+            btnGenelYenile.Click += (s, e) =>
+            {
+                try
+                {
+                    GenelYenile();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
 
             lblDurum = new Label { AutoSize = true, ForeColor = Color.DimGray, Text = "Hazır" };
 
@@ -135,7 +148,19 @@ namespace MarketYonetim
             nudKritikEsik = new NumericUpDown { Width = 70, Minimum = 1, Maximum = 1000, Value = 5 };
 
             btnStokYenile = new Button { Text = "Yenile", Width = 90 };
-            btnStokYenile.Click += (s, e) => { stokSayfa = 1; StokDurumunuYukle(); };
+            btnStokYenile.Click += (s, e) =>
+            {
+                try
+                {
+                    stokSayfa = 1;
+                    StokDurumunuYukle();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
 
             btnStokHareket = new Button { Text = "Seçili -> Hareketler", Width = 160 };
             btnStokHareket.Click += BtnStokHareket_Click;
@@ -256,7 +281,19 @@ namespace MarketYonetim
             dtBitis = new DateTimePicker { Width = 130, Format = DateTimePickerFormat.Short, ShowCheckBox = true };
 
             btnHareketYenile = new Button { Text = "Yenile", Width = 90 };
-            btnHareketYenile.Click += (s, e) => { hareketSayfa = 1; HareketleriYukle(); };
+            btnHareketYenile.Click += (s, e) =>
+            {
+                try
+                {
+                    hareketSayfa = 1;
+                    HareketleriYukle();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
 
             FlowLayoutPanel filtreLayout = new FlowLayoutPanel { Dock = DockStyle.Fill };
             filtreLayout.Controls.AddRange(new Control[]
@@ -314,16 +351,50 @@ namespace MarketYonetim
             cmbSayimDepo = new ComboBox { Width = 160, DropDownStyle = ComboBoxStyle.DropDownList };
 
             btnSayimYenile = new Button { Text = "Listele", Width = 90 };
-            btnSayimYenile.Click += (s, e) => { sayimSayfa = 1; SayimListesiniYukle(); };
+            btnSayimYenile.Click += (s, e) =>
+            {
+                try
+                {
+                    sayimSayfa = 1;
+                    SayimListesiniYukle();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
 
             btnSayimFarkHesapla = new Button { Text = "Farkları Hesapla", Width = 130 };
-            btnSayimFarkHesapla.Click += (s, e) => SayimFarklariniGuncelle();
+            btnSayimFarkHesapla.Click += (s, e) =>
+            {
+                try
+                {
+                    SayimFarklariniGuncelle();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
 
             btnSayimDuzelt = new Button { Text = "Düzeltme Fişi Yaz", Width = 150, BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White };
             btnSayimDuzelt.Click += BtnSayimDuzelt_Click;
 
             btnSayimTemizle = new Button { Text = "Temizle", Width = 90 };
-            btnSayimTemizle.Click += (s, e) => SayimTemizle();
+            btnSayimTemizle.Click += (s, e) =>
+            {
+                try
+                {
+                    SayimTemizle();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
 
             FlowLayoutPanel filtreLayout = new FlowLayoutPanel { Dock = DockStyle.Fill };
             filtreLayout.Controls.AddRange(new Control[]
@@ -482,16 +553,24 @@ namespace MarketYonetim
 
         private void BtnStokHareket_Click(object sender, EventArgs e)
         {
-            if (!seciliStokId.HasValue)
+            try
             {
-                MessageBox.Show("Önce stok seçmelisin.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
+                if (!seciliStokId.HasValue)
+                {
+                    MessageBox.Show("Önce stok seçmelisin.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
 
-            txtHareketStokId.Text = seciliStokId.Value.ToString();
-            tabControl.SelectedTab = tabHareketler;
-            hareketSayfa = 1;
-            HareketleriYukle();
+                txtHareketStokId.Text = seciliStokId.Value.ToString();
+                tabControl.SelectedTab = tabHareketler;
+                hareketSayfa = 1;
+                HareketleriYukle();
+            }
+            catch (Exception ex)
+            {
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void StokDurumunuYukle()
@@ -582,6 +661,7 @@ namespace MarketYonetim
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Fiş oluşturulamadı. Detay: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -747,6 +827,7 @@ namespace MarketYonetim
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Düzeltme fişi yazılamadı. Detay: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }

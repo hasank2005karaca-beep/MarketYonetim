@@ -37,6 +37,8 @@ namespace MarketYonetim
         public static string DepoKodu { get; set; } = "001";
         public static string KasiyerRumuzu { get; set; } = "KASIYER1";
         public static decimal VarsayilanKdvOrani { get; set; } = 20m;
+        // S7-FIX: Varsayılan fiyat tipi
+        public static string VarsayilanFiyatTipi { get; set; } = "STD";
 
         public static bool AyarDosyasiVarMi()
         {
@@ -75,6 +77,10 @@ namespace MarketYonetim
                                         VarsayilanKdvOrani = kdvOrani;
                                     }
                                     break;
+                                // S7-FIX: Varsayılan fiyat tipi yükle
+                                case "VarsayilanFiyatTipi":
+                                    VarsayilanFiyatTipi = deger;
+                                    break;
                             }
                         }
                     }
@@ -103,7 +109,9 @@ namespace MarketYonetim
                     $"WindowsAuth={WindowsAuth}",
                     $"DepoKodu={DepoKodu}",
                     $"KasiyerRumuzu={KasiyerRumuzu}",
-                    $"VarsayilanKdvOrani={VarsayilanKdvOrani}"
+                    $"VarsayilanKdvOrani={VarsayilanKdvOrani}",
+                    // S7-FIX: Varsayılan fiyat tipi kaydet
+                    $"VarsayilanFiyatTipi={VarsayilanFiyatTipi}"
                 };
                 File.WriteAllLines(ayarDosyasi, satirlar);
             }

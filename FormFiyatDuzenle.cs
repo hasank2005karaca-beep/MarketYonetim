@@ -21,6 +21,8 @@ namespace MarketYonetim
 
         private void InitializeComponent()
         {
+            // S7-FIX: DPI ölçekleme
+            AutoScaleMode = AutoScaleMode.Dpi;
             Text = "💲 Fiyat Yönetimi";
             Size = new Size(420, 420);
             StartPosition = FormStartPosition.CenterParent;
@@ -89,20 +91,21 @@ namespace MarketYonetim
 
         private void BtnGuncelle_Click(object sender, EventArgs e)
         {
-            if (cmbFiyatTipi.SelectedItem == null)
-            {
-                MessageBox.Show("Fiyat tipi seçin.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            string fiyatTipi = cmbFiyatTipi.SelectedItem.ToString();
             try
             {
+                if (cmbFiyatTipi.SelectedItem == null)
+                {
+                    MessageBox.Show("Fiyat tipi seçin.", "Uyarı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                string fiyatTipi = cmbFiyatTipi.SelectedItem.ToString();
                 VeriKatmani.FiyatGuncelle(stokId, fiyatTipi, nudFiyat.Value);
                 FiyatlariYukle();
             }
             catch (Exception ex)
             {
+                // S7-FIX: DB hatalarını kullanıcıya göster
                 MessageBox.Show($"Fiyat güncellenemedi. Detay: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }

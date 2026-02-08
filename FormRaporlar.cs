@@ -39,6 +39,8 @@ namespace MarketYonetim
 
         private void InitializeComponent()
         {
+            // S7-FIX: DPI ölçekleme
+            AutoScaleMode = AutoScaleMode.Dpi;
             Text = "📊 Raporlar";
             Size = new Size(1200, 720);
             StartPosition = FormStartPosition.CenterParent;
@@ -231,7 +233,18 @@ namespace MarketYonetim
                 ForeColor = Color.White,
                 FlatStyle = FlatStyle.Flat
             };
-            btnRaporGetir.Click += async (s, e) => await RaporuGetirAsync();
+            btnRaporGetir.Click += async (s, e) =>
+            {
+                try
+                {
+                    await RaporuGetirAsync();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
 
             btnCsv = new Button
             {
@@ -255,7 +268,18 @@ namespace MarketYonetim
                 ForeColor = Color.Black,
                 FlatStyle = FlatStyle.Flat
             };
-            btnYenile.Click += async (s, e) => await RaporuGetirAsync();
+            btnYenile.Click += async (s, e) =>
+            {
+                try
+                {
+                    await RaporuGetirAsync();
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
 
             Button btnKapat = new Button
             {
@@ -289,13 +313,21 @@ namespace MarketYonetim
 
         private void BtnUrunSec_Click(object sender, EventArgs e)
         {
-            using (UrunSecimForm form = new UrunSecimForm(txtUrunArama.Text))
+            try
             {
-                if (form.ShowDialog(this) == DialogResult.OK)
+                using (UrunSecimForm form = new UrunSecimForm(txtUrunArama.Text))
                 {
-                    seciliStokId = form.SeciliStokId;
-                    lblSeciliUrun.Text = $"Seçili ürün: {form.SeciliUrun}";
+                    if (form.ShowDialog(this) == DialogResult.OK)
+                    {
+                        seciliStokId = form.SeciliStokId;
+                        lblSeciliUrun.Text = $"Seçili ürün: {form.SeciliUrun}";
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                // S7-FIX: DB hatalarını kullanıcıya göster
+                MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -474,7 +506,18 @@ namespace MarketYonetim
                 Label lblArama = new Label { Text = "Arama", Location = new Point(16, 16), AutoSize = true };
                 txtArama = new TextBox { Location = new Point(16, 40), Width = 320, Text = arama ?? string.Empty };
                 Button btnAra = new Button { Text = "Ara", Location = new Point(348, 38), Width = 80 };
-                btnAra.Click += (s, e) => ListeyiDoldur();
+                btnAra.Click += (s, e) =>
+                {
+                    try
+                    {
+                        ListeyiDoldur();
+                    }
+                    catch (Exception ex)
+                    {
+                        // S7-FIX: DB hatalarını kullanıcıya göster
+                        MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                };
 
                 dgvUrun = new DataGridView
                 {
@@ -505,9 +548,17 @@ namespace MarketYonetim
 
             private void ListeyiDoldur()
             {
-                string arama = txtArama.Text.Trim();
-                DataTable dt = VeriKatmani.UrunAra(arama);
-                dgvUrun.DataSource = dt;
+                try
+                {
+                    string arama = txtArama.Text.Trim();
+                    DataTable dt = VeriKatmani.UrunAra(arama);
+                    dgvUrun.DataSource = dt;
+                }
+                catch (Exception ex)
+                {
+                    // S7-FIX: DB hatalarını kullanıcıya göster
+                    MessageBox.Show($"İşlem başarısız: {ex.Message}", "Hata", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             }
 
             private void Sec()
