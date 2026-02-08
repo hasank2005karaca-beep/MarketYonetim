@@ -42,14 +42,19 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Ayarlar.cs" />
+    <Compile Include="FormAyarlar.cs" />
+    <Compile Include="FormBarkodYonetimi.cs" />
+    <Compile Include="FormFiyatDuzenle.cs" />
     <Compile Include="FormMusteriSec.cs" />
     <Compile Include="FormOdeme.cs" />
     <Compile Include="FormRaporlar.cs" />
     <Compile Include="FormSatis.cs" />
-    <Compile Include="FormStokGirisi.cs" />
-    <Compile Include="FormUrunDetay.cs" />
+    <Compile Include="FormStokYonetimi.cs" />
+    <Compile Include="FormUrunDuzenle.cs" />
     <Compile Include="FormUrunYonetimi.cs" />
     <Compile Include="Program.cs" />
+    <Compile Include="VeriKatmani.cs" />
+    <Compile Include="Yardimcilar.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
