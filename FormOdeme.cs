@@ -91,6 +91,7 @@ namespace MarketYonetim
             dgvSepet.Columns["lSatirToplam"].HeaderText = "Satır Toplam";
             dgvSepet.Columns["nKdvOrani"].HeaderText = "KDV%";
             dgvSepet.Columns["lKdvTutar"].Visible = false;
+            dgvSepet.CellFormatting += DgvSepet_CellFormatting;
 
             foreach (DataGridViewColumn col in dgvSepet.Columns)
             {
@@ -143,6 +144,23 @@ namespace MarketYonetim
             panel.Controls.Add(lvKdvDagitim);
 
             return panel;
+        }
+
+        private void DgvSepet_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
+        {
+            if (e.RowIndex < 0)
+            {
+                return;
+            }
+
+            if (dgvSepet.Columns[e.ColumnIndex].DataPropertyName == "nKdvOrani")
+            {
+                if (e.Value != null)
+                {
+                    e.Value = Yardimcilar.KdvOraniYuzdeGoster(Convert.ToDecimal(e.Value));
+                    e.FormattingApplied = true;
+                }
+            }
         }
 
         private Control OlusturOdemePanel()
@@ -328,7 +346,7 @@ namespace MarketYonetim
             lvKdvDagitim.Items.Clear();
             foreach (var item in dagitim.OrderBy(x => x.Key))
             {
-                var listItem = new ListViewItem($"%{item.Key}");
+                var listItem = new ListViewItem($"%{Yardimcilar.KdvOraniYuzdeGoster(item.Key)}");
                 listItem.SubItems.Add(Yardimcilar.ParaFormatla(item.Value.Matrah));
                 listItem.SubItems.Add(Yardimcilar.ParaFormatla(item.Value.Kdv));
                 lvKdvDagitim.Items.Add(listItem);

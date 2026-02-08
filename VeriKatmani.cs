@@ -5,6 +5,8 @@ using System.Data.SqlClient;
 using System.Linq;
 using System.Text;
 using System.Collections.Concurrent;
+using System.IO;
+using System.Windows.Forms;
 
 namespace MarketYonetim
 {
@@ -29,6 +31,19 @@ namespace MarketYonetim
         // S7-FIX: Identity cache
         private static readonly ConcurrentDictionary<string, bool> _identityCache
             = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        private static readonly string[] DiscoveryTabloListesi = new[]
+        {
+            "tbStok","tbStokBarkodu","tbStokFiyati","tbStokSinifi","tbStokTipi",
+            "tbStokFisiMaster","tbStokFisiDetayi",
+            "tbAlisVeris","tbAlisverisSiparis","tbOdeme",
+            "tbMusteri","tbMusteriKarti",
+            "tbNakitKasa","tbDepo","tbCariIslem",
+            "tbFiyatTipi","tbOdemeSekli","tbAVSiraNo","tbAVReyonFisi"
+        };
+        private static string _stokGirisFisTipi;
+        private static string _stokCikisFisTipi;
+        private static string _satisFisTipiPesin;
+        private static string _satisFisTipiVeresiye;
         private const string DiscoveryTabloYapisiSql = @"
 SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE, COLUMN_DEFAULT
 FROM INFORMATION_SCHEMA.COLUMNS
@@ -80,6 +95,63 @@ JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
 JOIN sys.tables t ON i.object_id = t.object_id
 WHERE t.name IN ('tbStok','tbStokBarkodu','tbStokFiyati','tbStokFisiDetayi','tbAlisVeris')
 ORDER BY t.name, i.name;";
+
+        private const string DiscoveryPkSql = @"
+SELECT t.name AS TableName, c.name AS ColumnName, c.is_identity
+FROM sys.indexes i
+JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+JOIN sys.tables t ON i.object_id = t.object_id
+WHERE i.is_primary_key = 1
+  AND t.name IN (
+    'tbStok','tbStokBarkodu','tbStokFiyati','tbStokSinifi','tbStokTipi',
+    'tbStokFisiMaster','tbStokFisiDetayi',
+    'tbAlisVeris','tbAlisverisSiparis','tbOdeme',
+    'tbMusteri','tbMusteriKarti',
+    'tbNakitKasa','tbDepo','tbCariIslem',
+    'tbFiyatTipi','tbOdemeSekli','tbAVSiraNo','tbAVReyonFisi'
+  )
+ORDER BY t.name, c.name;";
+
+        private const string DiscoveryKdvSql = @"
+SELECT TOP 100 kdv
+FROM (
+    SELECT nKdvOrani1 AS kdv FROM tbAlisVeris WHERE nKdvOrani1 IS NOT NULL
+    UNION ALL SELECT nKdvOrani2 FROM tbAlisVeris WHERE nKdvOrani2 IS NOT NULL
+    UNION ALL SELECT nKdvOrani3 FROM tbAlisVeris WHERE nKdvOrani3 IS NOT NULL
+    UNION ALL SELECT nKdvOrani4 FROM tbAlisVeris WHERE nKdvOrani4 IS NOT NULL
+    UNION ALL SELECT nKdvOrani5 FROM tbAlisVeris WHERE nKdvOrani5 IS NOT NULL
+) x
+ORDER BY kdv DESC;";
+
+        private const string DiscoveryStokFisTipiSql = @"
+SELECT TOP 5 sFisTipi, COUNT(*) AS Adet
+FROM tbStokFisiMaster
+WHERE nGirisCikis = @girisCikis AND sFisTipi IS NOT NULL
+GROUP BY sFisTipi
+ORDER BY COUNT(*) DESC;";
+
+        private const string DiscoverySatisFisTipiSql = @"
+SELECT TOP 5 sFisTipi, COUNT(*) AS Adet
+FROM tbAlisVeris
+WHERE nGirisCikis = 2 AND sFisTipi IS NOT NULL
+GROUP BY sFisTipi
+ORDER BY COUNT(*) DESC;";
+
+        private const string DiscoverySatisFisTipiVeresiyeSql = @"
+SELECT TOP 5 sFisTipi, COUNT(*) AS Adet
+FROM tbAlisVeris
+WHERE nGirisCikis = 2
+  AND sFisTipi IN ('KR','VER','VERESIYE','ACIK','ACIKHESAP')
+GROUP BY sFisTipi
+ORDER BY COUNT(*) DESC;";
+
+        private const string DiscoveryNotNullKolonSql = @"
+SELECT c.name
+FROM sys.columns c
+JOIN sys.tables t ON c.object_id = t.object_id
+LEFT JOIN sys.default_constraints d ON d.parent_object_id = t.object_id AND d.parent_column_id = c.column_id
+WHERE t.name = @tablo AND c.is_nullable = 0 AND c.is_identity = 0 AND d.object_id IS NULL;";
 
         public static SqlConnection BaglantiOlustur()
         {
@@ -356,8 +428,15 @@ ORDER BY t.name, i.name;";
                     sb.AppendLine($"Satır: {indexler.Rows.Count}");
 
                     // S7-FIX: Console yerine dosya log
-                    string logPath = System.IO.Path.Combine(AppContext.BaseDirectory, "discovery_log.txt");
-                    System.IO.File.WriteAllText(logPath, sb.ToString());
+                    string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                    string logPath = Path.Combine(baseDir, "discovery_log.txt");
+                    string snapshotPath = Path.Combine(baseDir, "discovery_snapshot.json");
+                    File.WriteAllText(logPath, sb.ToString());
+                    string snapshotJson = DiscoverySnapshotOlustur();
+                    if (!string.IsNullOrWhiteSpace(snapshotJson))
+                    {
+                        File.WriteAllText(snapshotPath, snapshotJson, Encoding.UTF8);
+                    }
                 }
                 catch (SqlException)
                 {
@@ -366,8 +445,350 @@ ORDER BY t.name, i.name;";
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Discovery çalıştırılamadı: {ex.Message}");
+                    try
+                    {
+                        MessageBox.Show(
+                            $"Discovery log yazılamadı: {ex.Message}",
+                            "Discovery Hatası",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                    }
+                    catch
+                    {
+                        // UI hatasında sessiz geç
+                    }
                 }
             });
+        }
+
+        public static (bool Ok, string Mesaj) KritikSemaKontroluYap()
+        {
+            return OkumaIslem((conn, tran) =>
+            {
+                List<string> eksikler = new List<string>();
+                string[] kritikTablolar =
+                {
+                    "tbStok","tbStokBarkodu","tbStokFiyati",
+                    "tbAlisVeris","tbOdeme",
+                    "tbStokFisiMaster","tbStokFisiDetayi"
+                };
+
+                foreach (string tablo in kritikTablolar)
+                {
+                    if (!TabloVarMi(conn, tran, tablo))
+                    {
+                        eksikler.Add($"Tablo eksik: {tablo}");
+                    }
+                }
+
+                if (TabloVarMi(conn, tran, "tbOdeme"))
+                {
+                    HashSet<string> kolonlar = TabloKolonlariniGetir(conn, tran, "tbOdeme");
+                    string alisverisKolon = IlkKolonuBul(kolonlar, "nAlisverisID", "nAlisverisId", "nSatisID");
+                    string odemeSekliKolon = IlkKolonuBul(kolonlar, "sOdemeSekli", "sOdemeTipi", "sOdeme");
+                    string tutarKolon = IlkKolonuBul(kolonlar, "lTutar", "nTutar");
+                    string tarihKolon = IlkKolonuBul(kolonlar, "dteKayitTarihi", "dteOdemeTarihi", "dteTarih", "dTarih", "dteIslemTarihi");
+
+                    if (string.IsNullOrWhiteSpace(alisverisKolon))
+                    {
+                        eksikler.Add("tbOdeme: nAlisverisID (veya alternatif) bulunamadı");
+                    }
+                    if (string.IsNullOrWhiteSpace(odemeSekliKolon))
+                    {
+                        eksikler.Add("tbOdeme: sOdemeSekli (veya alternatif) bulunamadı");
+                    }
+                    if (string.IsNullOrWhiteSpace(tutarKolon))
+                    {
+                        eksikler.Add("tbOdeme: lTutar (veya alternatif) bulunamadı");
+                    }
+                    if (string.IsNullOrWhiteSpace(tarihKolon))
+                    {
+                        eksikler.Add("tbOdeme: dteKayitTarihi (veya alternatif) bulunamadı");
+                    }
+                }
+
+                if (eksikler.Count > 0)
+                {
+                    return (false, string.Join(Environment.NewLine, eksikler));
+                }
+
+                return (true, "Kritik tablo/kolonlar uygun.");
+            });
+        }
+
+        private static string DiscoverySnapshotOlustur()
+        {
+            try
+            {
+                return OkumaIslem((conn, tran) =>
+                {
+                    Dictionary<string, bool> tabloDurumlari = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                    foreach (string tablo in DiscoveryTabloListesi)
+                    {
+                        tabloDurumlari[tablo] = TabloVarMi(conn, tran, tablo);
+                    }
+
+                    Dictionary<string, Dictionary<string, bool>> pkIdentity = new Dictionary<string, Dictionary<string, bool>>(StringComparer.OrdinalIgnoreCase);
+                    using (SqlCommand cmd = new SqlCommand(DiscoveryPkSql, conn, tran))
+                    using (SqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            string tablo = reader.GetString(0);
+                            string kolon = reader.GetString(1);
+                            bool identity = reader.GetBoolean(2);
+                            if (!pkIdentity.ContainsKey(tablo))
+                            {
+                                pkIdentity[tablo] = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                            }
+                            pkIdentity[tablo][kolon] = identity;
+                        }
+                    }
+
+                    List<(string FisTipi, int Adet)> satisFisTipleri = FisTipleriListeGetir(conn, tran, DiscoverySatisFisTipiSql);
+                    List<(string FisTipi, int Adet)> stokGirisFisTipleri = FisTipleriListeGetir(conn, tran, DiscoveryStokFisTipiSql, Parametre("@girisCikis", 1));
+                    List<(string FisTipi, int Adet)> stokCikisFisTipleri = FisTipleriListeGetir(conn, tran, DiscoveryStokFisTipiSql, Parametre("@girisCikis", 2));
+
+                    string kdvFormat = KdvFormatTespitEt(conn, tran);
+
+                    Dictionary<string, int> depoFirmaMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    if (TabloVarMi(conn, tran, "tbDepo"))
+                    {
+                        using (SqlCommand cmd = new SqlCommand(DiscoveryDepoSql, conn, tran))
+                        using (SqlDataReader reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                string depo = reader["sDepo"]?.ToString() ?? string.Empty;
+                                if (int.TryParse(reader["nFirmaID"]?.ToString() ?? "0", out int firmaId))
+                                {
+                                    depoFirmaMap[depo] = firmaId;
+                                }
+                            }
+                        }
+                    }
+
+                    string serverMasked = MaskeleAyar(Ayarlar.SunucuVerisiniOlustur());
+                    string dbMasked = MaskeleAyar(Ayarlar.VeritabaniAdi);
+
+                    return DiscoverySnapshotJsonOlustur(
+                        DateTime.Now,
+                        serverMasked,
+                        dbMasked,
+                        tabloDurumlari,
+                        pkIdentity,
+                        satisFisTipleri,
+                        stokGirisFisTipleri,
+                        stokCikisFisTipleri,
+                        kdvFormat,
+                        depoFirmaMap);
+                });
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static List<(string FisTipi, int Adet)> FisTipleriListeGetir(SqlConnection conn, SqlTransaction tran, string sql, params SqlParameter[] parametreler)
+        {
+            List<(string FisTipi, int Adet)> sonuc = new List<(string FisTipi, int Adet)>();
+            using (SqlCommand cmd = new SqlCommand(sql, conn, tran))
+            {
+                if (parametreler != null && parametreler.Length > 0)
+                {
+                    cmd.Parameters.AddRange(parametreler);
+                }
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        string fisTipi = reader["sFisTipi"]?.ToString() ?? string.Empty;
+                        int adet = Convert.ToInt32(reader["Adet"]);
+                        if (!string.IsNullOrWhiteSpace(fisTipi))
+                        {
+                            sonuc.Add((fisTipi, adet));
+                        }
+                    }
+                }
+            }
+            return sonuc;
+        }
+
+        private static string KdvFormatTespitEt(SqlConnection conn, SqlTransaction tran)
+        {
+            if (!TabloVarMi(conn, tran, "tbAlisVeris"))
+            {
+                return "unknown";
+            }
+
+            List<decimal> degerler = new List<decimal>();
+            using (SqlCommand cmd = new SqlCommand(DiscoveryKdvSql, conn, tran))
+            using (SqlDataReader reader = cmd.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    if (decimal.TryParse(reader["kdv"]?.ToString() ?? string.Empty, out decimal deger))
+                    {
+                        degerler.Add(deger);
+                    }
+                }
+            }
+
+            if (degerler.Count == 0)
+            {
+                return "unknown";
+            }
+
+            bool anyFraction = degerler.Any(v => v > 0m && v < 1m);
+            bool anyPercent = degerler.Any(v => v >= 1m);
+            if (anyFraction && anyPercent)
+            {
+                return "mixed";
+            }
+            return anyFraction ? "fraction" : "percent";
+        }
+
+        private static string DiscoverySnapshotJsonOlustur(
+            DateTime generatedAt,
+            string server,
+            string database,
+            Dictionary<string, bool> tables,
+            Dictionary<string, Dictionary<string, bool>> pkIdentity,
+            List<(string FisTipi, int Adet)> satisFisTipleri,
+            List<(string FisTipi, int Adet)> stokGirisFisTipleri,
+            List<(string FisTipi, int Adet)> stokCikisFisTipleri,
+            string kdvFormat,
+            Dictionary<string, int> depoFirmaMap)
+        {
+            StringBuilder json = new StringBuilder();
+            json.Append("{");
+            json.AppendFormat("\"generatedAt\":\"{0}\",", generatedAt.ToString("o"));
+            json.AppendFormat("\"server\":\"{0}\",", JsonEscape(server));
+            json.AppendFormat("\"database\":\"{0}\",", JsonEscape(database));
+
+            json.Append("\"tables\":{");
+            bool first = true;
+            foreach (var kvp in tables.OrderBy(k => k.Key))
+            {
+                if (!first)
+                {
+                    json.Append(",");
+                }
+                json.AppendFormat("\"{0}\":{1}", JsonEscape(kvp.Key), kvp.Value.ToString().ToLowerInvariant());
+                first = false;
+            }
+            json.Append("},");
+
+            json.Append("\"pkIdentity\":{");
+            first = true;
+            foreach (var tablo in pkIdentity.OrderBy(k => k.Key))
+            {
+                if (!first)
+                {
+                    json.Append(",");
+                }
+                json.AppendFormat("\"{0}\":{{", JsonEscape(tablo.Key));
+                bool innerFirst = true;
+                foreach (var kolon in tablo.Value.OrderBy(k => k.Key))
+                {
+                    if (!innerFirst)
+                    {
+                        json.Append(",");
+                    }
+                    json.AppendFormat("\"{0}\":{1}", JsonEscape(kolon.Key), kolon.Value.ToString().ToLowerInvariant());
+                    innerFirst = false;
+                }
+                json.Append("}");
+                first = false;
+            }
+            json.Append("},");
+
+            json.Append("\"fisTipleri\":{");
+            json.Append("\"tbAlisVeris\":");
+            JsonFisTipleriEkle(json, satisFisTipleri);
+            json.Append(",\"tbStokFisiMaster\":{");
+            json.Append("\"giris\":");
+            JsonFisTipleriEkle(json, stokGirisFisTipleri);
+            json.Append(",\"cikis\":");
+            JsonFisTipleriEkle(json, stokCikisFisTipleri);
+            json.Append("}");
+            json.Append("},");
+
+            json.AppendFormat("\"kdvFormat\":\"{0}\",", JsonEscape(kdvFormat));
+
+            json.Append("\"depoFirmaMap\":{");
+            first = true;
+            foreach (var kvp in depoFirmaMap.OrderBy(k => k.Key))
+            {
+                if (!first)
+                {
+                    json.Append(",");
+                }
+                json.AppendFormat("\"{0}\":{1}", JsonEscape(kvp.Key), kvp.Value);
+                first = false;
+            }
+            json.Append("}");
+            json.Append("}");
+
+            return json.ToString();
+        }
+
+        private static void JsonFisTipleriEkle(StringBuilder json, List<(string FisTipi, int Adet)> fisTipleri)
+        {
+            json.Append("[");
+            for (int i = 0; i < fisTipleri.Count; i++)
+            {
+                if (i > 0)
+                {
+                    json.Append(",");
+                }
+                json.AppendFormat("{{\"sFisTipi\":\"{0}\",\"adet\":{1}}}",
+                    JsonEscape(fisTipleri[i].FisTipi),
+                    fisTipleri[i].Adet);
+            }
+            json.Append("]");
+        }
+
+        private static string JsonEscape(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+            return value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n");
+        }
+
+        private static string MaskeleAyar(string deger)
+        {
+            if (string.IsNullOrWhiteSpace(deger))
+            {
+                return "unknown";
+            }
+            string temiz = deger.Trim();
+            if (temiz.Length <= 2)
+            {
+                return new string('*', temiz.Length);
+            }
+            if (temiz.Length <= 6)
+            {
+                return $"{temiz.Substring(0, 1)}***{temiz.Substring(temiz.Length - 1, 1)}";
+            }
+            return $"{temiz.Substring(0, 2)}***{temiz.Substring(temiz.Length - 2, 2)}";
+        }
+
+        private static void LogUyari(string mesaj)
+        {
+            try
+            {
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string logPath = Path.Combine(baseDir, "discovery_log.txt");
+                File.AppendAllText(logPath, $"{DateTime.Now:O} | {mesaj}{Environment.NewLine}");
+            }
+            catch
+            {
+                // log hatası sessiz geçilir
+            }
         }
 
         private static HashSet<string> TabloKolonlariniGetir(SqlConnection conn, SqlTransaction tran, string tablo)
@@ -475,6 +896,145 @@ WHERE t.name = @tablo AND c.name = @kolon";
                     return dt;
                 }
             });
+        }
+
+        public static int? DepoyaGoreFirmaIdGetir(string depoKodu)
+        {
+            return SqlHataSarmala(() =>
+            {
+                if (string.IsNullOrWhiteSpace(depoKodu))
+                {
+                    return (int?)null;
+                }
+
+                try
+                {
+                    object sonuc = SorguCalistirScalar(
+                        "SELECT TOP 1 nFirmaID FROM tbDepo WHERE sDepo = @depo",
+                        Parametre("@depo", depoKodu));
+                    if (sonuc == null || sonuc == DBNull.Value)
+                    {
+                        return (int?)null;
+                    }
+                    return Convert.ToInt32(sonuc);
+                }
+                catch (Exception ex)
+                {
+                    LogUyari($"Depo firma ID alınamadı. Depo: {depoKodu}. Hata: {ex.Message}");
+                    return (int?)null;
+                }
+            });
+        }
+
+        public static string VarsayilanStokFisTipiGetir(int girisCikis)
+        {
+            if (girisCikis == 1 && !string.IsNullOrWhiteSpace(Ayarlar.StokGirisFisTipi))
+            {
+                return Ayarlar.StokGirisFisTipi;
+            }
+
+            if (girisCikis == 2 && !string.IsNullOrWhiteSpace(Ayarlar.StokCikisFisTipi))
+            {
+                return Ayarlar.StokCikisFisTipi;
+            }
+
+            if (girisCikis == 1 && !string.IsNullOrWhiteSpace(_stokGirisFisTipi))
+            {
+                return _stokGirisFisTipi;
+            }
+
+            if (girisCikis == 2 && !string.IsNullOrWhiteSpace(_stokCikisFisTipi))
+            {
+                return _stokCikisFisTipi;
+            }
+
+            string varsayilan = girisCikis == 1 ? "SG" : "SC";
+            try
+            {
+                List<(string FisTipi, int Adet)> fisTipleri = OkumaIslem(
+                    (conn, tran) => FisTipleriListeGetir(conn, tran, DiscoveryStokFisTipiSql, Parametre("@girisCikis", girisCikis)));
+                string bulunan = fisTipleri.FirstOrDefault().FisTipi;
+                if (!string.IsNullOrWhiteSpace(bulunan))
+                {
+                    if (girisCikis == 1)
+                    {
+                        _stokGirisFisTipi = bulunan;
+                    }
+                    else
+                    {
+                        _stokCikisFisTipi = bulunan;
+                    }
+                    return bulunan;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogUyari($"Varsayılan stok fiş tipi alınamadı (nGirisCikis={girisCikis}). Hata: {ex.Message}");
+            }
+
+            return varsayilan;
+        }
+
+        public static string VarsayilanSatisFisTipiGetir(string odemeTipi)
+        {
+            bool veresiye = string.Equals(odemeTipi, "Veresiye", StringComparison.OrdinalIgnoreCase);
+            if (veresiye && !string.IsNullOrWhiteSpace(Ayarlar.SatisFisTipiVeresiye))
+            {
+                return Ayarlar.SatisFisTipiVeresiye;
+            }
+
+            if (!veresiye && !string.IsNullOrWhiteSpace(Ayarlar.SatisFisTipiPesin))
+            {
+                return Ayarlar.SatisFisTipiPesin;
+            }
+
+            if (veresiye && !string.IsNullOrWhiteSpace(_satisFisTipiVeresiye))
+            {
+                return _satisFisTipiVeresiye;
+            }
+
+            if (!veresiye && !string.IsNullOrWhiteSpace(_satisFisTipiPesin))
+            {
+                return _satisFisTipiPesin;
+            }
+
+            string fallback = veresiye ? "KR" : "PS";
+            try
+            {
+                if (veresiye)
+                {
+                    List<(string FisTipi, int Adet)> veresiyeTipleri = OkumaIslem(
+                        (conn, tran) => FisTipleriListeGetir(conn, tran, DiscoverySatisFisTipiVeresiyeSql));
+                    string bulunan = veresiyeTipleri.FirstOrDefault().FisTipi;
+                    if (!string.IsNullOrWhiteSpace(bulunan))
+                    {
+                        _satisFisTipiVeresiye = bulunan;
+                        return bulunan;
+                    }
+                }
+
+                List<(string FisTipi, int Adet)> tumTipler = OkumaIslem(
+                    (conn, tran) => FisTipleriListeGetir(conn, tran, DiscoverySatisFisTipiSql));
+                string genel = tumTipler.FirstOrDefault().FisTipi;
+                if (!string.IsNullOrWhiteSpace(genel))
+                {
+                    if (veresiye)
+                    {
+                        _satisFisTipiVeresiye = genel;
+                    }
+                    else
+                    {
+                        _satisFisTipiPesin = genel;
+                    }
+                    return genel;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogUyari($"Varsayılan satış fiş tipi alınamadı. Hata: {ex.Message}");
+            }
+
+            return fallback;
         }
 
         public static DataTable StokDurumuGetir(string arama, string barkod, string depo, string stokDurum, int kritikEsik, int sayfa, int sayfaBoyutu = 50)
@@ -639,6 +1199,24 @@ OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
 
                 decimal toplamMiktar = kalemler.Sum(k => k.miktar);
                 decimal toplamTutar = kalemler.Sum(k => (k.birimFiyat ?? 0m) * k.miktar);
+                int? resolvedFirmaId = firmaId ?? DepoyaGoreFirmaIdGetir(depo);
+                if (!resolvedFirmaId.HasValue)
+                {
+                    LogUyari($"Depo bulunamadığı için nFirmaID varsayılan 1 kullanıldı. Depo: {depo}");
+                    try
+                    {
+                        MessageBox.Show(
+                            $"Depo '{depo}' için firma bulunamadı. Varsayılan olarak 1 kullanılacak.",
+                            "Depo Uyarısı",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                    }
+                    catch
+                    {
+                        // UI hatasında sessiz geç
+                    }
+                    resolvedFirmaId = 1;
+                }
 
                 Dictionary<string, object> masterKolonDegerleri = new Dictionary<string, object>
                 {
@@ -646,7 +1224,7 @@ OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
                     ["nGirisCikis"] = girisCikis,
                     ["sFisTipi"] = fisTipi,
                     ["sDepo"] = depo,
-                    ["nFirmaID"] = firmaId ?? 1,
+                    ["nFirmaID"] = resolvedFirmaId.Value,
                     ["dteFisTarihi"] = DateTime.Now,
                     ["lToplamMiktar"] = toplamMiktar,
                     ["lMalBedeli"] = toplamTutar,
@@ -719,7 +1297,8 @@ OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
 
         public static int StokGirisiYap(int stokId, decimal miktar, string depo, string aciklama)
         {
-            return StokFisiOlustur(1, "SG", depo, null, aciklama, new List<(int stokId, decimal miktar, decimal? birimFiyat, string satirAciklama)>
+            string fisTipi = VarsayilanStokFisTipiGetir(1);
+            return StokFisiOlustur(1, fisTipi, depo, null, aciklama, new List<(int stokId, decimal miktar, decimal? birimFiyat, string satirAciklama)>
             {
                 (stokId, miktar, null, aciklama)
             });
@@ -727,7 +1306,8 @@ OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
 
         public static int StokCikisiYap(int stokId, decimal miktar, string depo, string aciklama)
         {
-            return StokFisiOlustur(2, "SC", depo, null, aciklama, new List<(int stokId, decimal miktar, decimal? birimFiyat, string satirAciklama)>
+            string fisTipi = VarsayilanStokFisTipiGetir(2);
+            return StokFisiOlustur(2, fisTipi, depo, null, aciklama, new List<(int stokId, decimal miktar, decimal? birimFiyat, string satirAciklama)>
             {
                 (stokId, miktar, null, aciklama)
             });
@@ -1636,6 +2216,7 @@ WHERE b.sBarkod = @barkod";
                 decimal kdvToplam = satirlar.Sum(s => s.KdvTutar);
                 decimal brutToplam = satirlar.Sum(s => s.BrutTutar);
                 decimal iskontoToplam = satirlar.Sum(s => s.SatirIskonto) + satirlar.Sum(s => s.DipIskonto);
+                string satisFisTipi = VarsayilanSatisFisTipiGetir(odemeTipi);
 
                 Dictionary<string, object> master = new Dictionary<string, object>
                 {
@@ -1651,7 +2232,7 @@ WHERE b.sBarkod = @barkod";
                     ["lMalBedeli"] = brutToplam,
                     ["lIndirimTutar"] = iskontoToplam,
                     // S7-FIX: Nebim uyumlu fiş tipi
-                    ["sFisTipi"] = odemeTipi == "Veresiye" ? "KR" : "PS",
+                    ["sFisTipi"] = satisFisTipi,
                     ["lMalIskontoTutari"] = satirlar.Sum(s => s.SatirIskonto),
                     ["lDipIskontoTutari"] = satirlar.Sum(s => s.DipIskonto),
                     ["nMusteriID"] = musteriId,
@@ -1715,14 +2296,34 @@ WHERE b.sBarkod = @barkod";
 
                 bool stokMasterIdentity = IdentityKolonVarMi(conn, tran, "tbStokFisiMaster", "nStokFisiID");
                 int stokFisiId = stokMasterIdentity ? 0 : YeniIdUret(conn, tran, "tbStokFisiMaster", "nStokFisiID");
+                string stokFisTipi = VarsayilanStokFisTipiGetir(2);
+                int? satisFirmaId = DepoyaGoreFirmaIdGetir(Ayarlar.DepoKodu);
+                if (!satisFirmaId.HasValue)
+                {
+                    LogUyari($"Satış stok fişi için firma ID bulunamadı. Depo: {Ayarlar.DepoKodu}. Varsayılan 1 kullanılacak.");
+                    try
+                    {
+                        MessageBox.Show(
+                            $"Depo '{Ayarlar.DepoKodu}' için firma bulunamadı. Varsayılan olarak 1 kullanılacak.",
+                            "Depo Uyarısı",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                    }
+                    catch
+                    {
+                        // UI hatasında sessiz geç
+                    }
+                    satisFirmaId = 1;
+                }
 
                 Dictionary<string, object> stokMaster = new Dictionary<string, object>
                 {
                     ["nStokFisiID"] = stokFisiId,
                     ["nGirisCikis"] = 2,
-                    ["sFisTipi"] = "SAT",
+                    ["sFisTipi"] = stokFisTipi,
                     ["dteFisTarihi"] = DateTime.Now,
                     ["sDepo"] = Ayarlar.DepoKodu,
+                    ["nFirmaID"] = satisFirmaId.Value,
                     ["lToplamMiktar"] = satirlar.Sum(s => s.Miktar),
                     ["lMalBedeli"] = brutToplam,
                     ["lNetTutar"] = netToplam,
@@ -1763,7 +2364,7 @@ WHERE b.sBarkod = @barkod";
                         ["nStokFisiID"] = stokFisiId,
                         ["nStokID"] = satir.StokId,
                         ["nGirisCikis"] = 2,
-                        ["sFisTipi"] = "SAT",
+                        ["sFisTipi"] = stokFisTipi,
                         ["sDepo"] = Ayarlar.DepoKodu,
                         ["dteFisTarihi"] = DateTime.Now,
                         ["dteIslemTarihi"] = DateTime.Now,
@@ -1790,6 +2391,167 @@ WHERE b.sBarkod = @barkod";
                 KaydetNakitKasa(conn, tran, nakitKolonlar, satisId, nakit);
 
                 return satisId;
+            });
+        }
+
+        public static (bool Ok, string Mesaj) SatisKaydetDryRun(
+            DataTable sepet,
+            int musteriId,
+            string odemeTipi,
+            decimal nakit,
+            decimal krediKarti,
+            decimal dipIskontoYuzde)
+        {
+            if (sepet == null || sepet.Rows.Count == 0)
+            {
+                return (false, "Sepet boş.");
+            }
+
+            return OkumaIslem((conn, tran) =>
+            {
+                List<string> eksikTablolar = new List<string>();
+                string[] zorunluTablolar =
+                {
+                    "tbAlisVeris",
+                    "tbAlisverisSiparis",
+                    "tbStokFisiMaster",
+                    "tbStokFisiDetayi",
+                    "tbOdeme"
+                };
+
+                foreach (string tablo in zorunluTablolar)
+                {
+                    if (!TabloVarMi(conn, tran, tablo))
+                    {
+                        eksikTablolar.Add(tablo);
+                    }
+                }
+
+                if (nakit > 0 && !TabloVarMi(conn, tran, "tbNakitKasa"))
+                {
+                    eksikTablolar.Add("tbNakitKasa");
+                }
+
+                if (eksikTablolar.Count > 0)
+                {
+                    return (false, $"Eksik tablo(lar): {string.Join(", ", eksikTablolar)}");
+                }
+
+                List<SatisSatir> satirlar = SatisSatirlariHazirla(sepet, dipIskontoYuzde);
+                decimal netToplam = satirlar.Sum(s => s.NetTutar);
+                decimal kdvToplam = satirlar.Sum(s => s.KdvTutar);
+                decimal brutToplam = satirlar.Sum(s => s.BrutTutar);
+                string satisFisTipi = VarsayilanSatisFisTipiGetir(odemeTipi);
+                string stokFisTipi = VarsayilanStokFisTipiGetir(2);
+
+                var kdvDagitim = Yardimcilar.KdvDagit(satirlar.Select(s => (s.NetTutar, s.KdvOrani)));
+                HashSet<string> alisVerisPlan = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "nAlisverisID","nGirisCikis","dteFisTarihi","dteKayitTarihi","dteFaturaTarihi",
+                    "lToplamTutar","lNetTutar","lToplamKdv","lMalBedeli","lIndirimTutar",
+                    "sFisTipi","lMalIskontoTutari","lDipIskontoTutari","nMusteriID","sDepo","sKasiyer"
+                };
+
+                int kdvIdx = 1;
+                foreach (var kvp in kdvDagitim.OrderByDescending(k => k.Value.Matrah))
+                {
+                    if (kdvIdx > 5)
+                    {
+                        break;
+                    }
+                    alisVerisPlan.Add($"nKdvOrani{kdvIdx}");
+                    alisVerisPlan.Add($"lKdvMatrahi{kdvIdx}");
+                    alisVerisPlan.Add($"lKdv{kdvIdx}");
+                    kdvIdx++;
+                }
+
+                HashSet<string> siparisPlan = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "nAlisverisID","nStokID","lMiktar","lBirimFiyat","lBrutTutar","lTutar",
+                    "lNetTutar","lKdvOrani","lKdvTutar","sAciklama"
+                };
+                HashSet<string> siparisKolonlar = TabloKolonlariniGetir(conn, tran, "tbAlisverisSiparis");
+                string siparisIdKolon = IlkKolonuBul(siparisKolonlar, "nIslemID", "nDetayID", "nSiparisID");
+                if (!string.IsNullOrWhiteSpace(siparisIdKolon) && !IdentityKolonVarMi(conn, tran, "tbAlisverisSiparis", siparisIdKolon))
+                {
+                    siparisPlan.Add(siparisIdKolon);
+                }
+
+                HashSet<string> stokMasterPlan = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "nStokFisiID","nGirisCikis","sFisTipi","dteFisTarihi","sDepo","nFirmaID",
+                    "lToplamMiktar","lMalBedeli","lNetTutar","lToplamTutar","sAciklama","nAlisverisID"
+                };
+
+                kdvIdx = 1;
+                foreach (var kvp in kdvDagitim.OrderByDescending(k => k.Value.Matrah))
+                {
+                    if (kdvIdx > 5)
+                    {
+                        break;
+                    }
+                    stokMasterPlan.Add($"nKdvOrani{kdvIdx}");
+                    stokMasterPlan.Add($"lKdvMatrahi{kdvIdx}");
+                    stokMasterPlan.Add($"lKdv{kdvIdx}");
+                    kdvIdx++;
+                }
+
+                HashSet<string> stokDetayPlan = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "nStokFisiID","nStokID","nGirisCikis","sFisTipi","sDepo","dteFisTarihi","dteIslemTarihi",
+                    "lCikisMiktar1","lCikisFiyat","lCikisTutar","lNetTutar","sAciklama"
+                };
+                HashSet<string> stokDetayKolonlar = TabloKolonlariniGetir(conn, tran, "tbStokFisiDetayi");
+                string stokDetayIdKolon = IlkKolonuBul(stokDetayKolonlar, "nIslemID", "nDetayID");
+                if (!string.IsNullOrWhiteSpace(stokDetayIdKolon) && !IdentityKolonVarMi(conn, tran, "tbStokFisiDetayi", stokDetayIdKolon))
+                {
+                    stokDetayPlan.Add(stokDetayIdKolon);
+                }
+
+                HashSet<string> odemePlan = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "nAlisverisID","dteOdemeTarihi","lTutar","sOdemeTipi","sAciklama"
+                };
+                HashSet<string> odemeKolonlar = TabloKolonlariniGetir(conn, tran, "tbOdeme");
+                string odemeIdKolon = IlkKolonuBul(odemeKolonlar, "nOdemeID", "nTahsilatID", "nIslemID");
+                if (!string.IsNullOrWhiteSpace(odemeIdKolon) && !IdentityKolonVarMi(conn, tran, "tbOdeme", odemeIdKolon))
+                {
+                    odemePlan.Add(odemeIdKolon);
+                }
+
+                HashSet<string> nakitPlan = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "nAlisverisID","dteIslemTarihi","lTutar","sIslemTipi","sAciklama"
+                };
+                HashSet<string> nakitKolonlar = null;
+                string nakitIdKolon = null;
+                if (nakit > 0)
+                {
+                    nakitKolonlar = TabloKolonlariniGetir(conn, tran, "tbNakitKasa");
+                    nakitIdKolon = IlkKolonuBul(nakitKolonlar, "nKasaID", "nIslemID");
+                    if (!string.IsNullOrWhiteSpace(nakitIdKolon) && !IdentityKolonVarMi(conn, tran, "tbNakitKasa", nakitIdKolon))
+                    {
+                        nakitPlan.Add(nakitIdKolon);
+                    }
+                }
+
+                List<string> eksikKolonlar = new List<string>();
+                EksikNotNullKolonlariEkle(conn, tran, "tbAlisVeris", alisVerisPlan, eksikKolonlar);
+                EksikNotNullKolonlariEkle(conn, tran, "tbAlisverisSiparis", siparisPlan, eksikKolonlar);
+                EksikNotNullKolonlariEkle(conn, tran, "tbStokFisiMaster", stokMasterPlan, eksikKolonlar);
+                EksikNotNullKolonlariEkle(conn, tran, "tbStokFisiDetayi", stokDetayPlan, eksikKolonlar);
+                EksikNotNullKolonlariEkle(conn, tran, "tbOdeme", odemePlan, eksikKolonlar);
+                if (nakit > 0)
+                {
+                    EksikNotNullKolonlariEkle(conn, tran, "tbNakitKasa", nakitPlan, eksikKolonlar);
+                }
+
+                if (eksikKolonlar.Count > 0)
+                {
+                    return (false, $"NOT NULL kolonlar doldurulmuyor: {string.Join(", ", eksikKolonlar)}");
+                }
+
+                return (true, $"Dry-run başarılı. Fiş tipi: {satisFisTipi}, stok fiş tipi: {stokFisTipi}, net: {netToplam:N2}, kdv: {kdvToplam:N2}, brut: {brutToplam:N2}.");
             });
         }
 
@@ -2385,6 +3147,39 @@ WHERE TABLE_NAME = @tablo";
             }
         }
 
+        private static HashSet<string> NotNullKolonlariGetir(SqlConnection conn, SqlTransaction tran, string tablo)
+        {
+            HashSet<string> kolonlar = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (SqlCommand cmd = new SqlCommand(DiscoveryNotNullKolonSql, conn, tran))
+            {
+                cmd.Parameters.AddWithValue("@tablo", tablo);
+                using (SqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        string kolon = reader.GetString(0);
+                        if (!string.IsNullOrWhiteSpace(kolon))
+                        {
+                            kolonlar.Add(kolon);
+                        }
+                    }
+                }
+            }
+            return kolonlar;
+        }
+
+        private static void EksikNotNullKolonlariEkle(SqlConnection conn, SqlTransaction tran, string tablo, HashSet<string> planlananKolonlar, List<string> eksikKolonlar)
+        {
+            HashSet<string> zorunluKolonlar = NotNullKolonlariGetir(conn, tran, tablo);
+            foreach (string kolon in zorunluKolonlar)
+            {
+                if (!planlananKolonlar.Contains(kolon))
+                {
+                    eksikKolonlar.Add($"{tablo}.{kolon}");
+                }
+            }
+        }
+
         private static CariIslemBilgisi CariIslemBilgileriniGetir(SqlConnection conn, SqlTransaction tran)
         {
             CariIslemBilgisi bilgi = new CariIslemBilgisi();
@@ -2652,7 +3447,7 @@ OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
                     cmd.Parameters.AddWithValue("@id", musteriId);
                     if (fisTipiVar)
                     {
-                        cmd.Parameters.AddWithValue("@fisTipi", "KR");
+                        cmd.Parameters.AddWithValue("@fisTipi", VarsayilanSatisFisTipiGetir("Veresiye"));
                     }
                     if (bas.HasValue)
                     {
@@ -2760,7 +3555,7 @@ OFFSET @offset ROWS FETCH NEXT @sayfaBoyutu ROWS ONLY;";
                     cmd.Parameters.AddWithValue("@id", musteriId);
                     if (fisTipiVar)
                     {
-                        cmd.Parameters.AddWithValue("@fisTipi", "KR");
+                        cmd.Parameters.AddWithValue("@fisTipi", VarsayilanSatisFisTipiGetir("Veresiye"));
                     }
                     if (!string.IsNullOrWhiteSpace(tarihKolon))
                     {
