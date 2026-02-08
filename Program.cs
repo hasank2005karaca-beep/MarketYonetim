@@ -10,27 +10,34 @@ namespace MarketYonetim
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            
-            // Ayarları yükle
-            Ayarlar.YukleAyarlar();
-            
-            // Veritabanı bağlantısını test et
-            if (!Ayarlar.BaglantiTest())
+
+            if (!Ayarlar.AyarDosyasiVarMi())
             {
-                // Bağlantı yoksa ayarlar formunu göster
-                MessageBox.Show(
-                    "Veritabanına bağlanılamadı!\nLütfen bağlantı ayarlarını yapılandırın.",
-                    "Bağlantı Hatası",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                
                 FormAyarlar ayarlarForm = new FormAyarlar();
                 if (ayarlarForm.ShowDialog() != DialogResult.OK)
                 {
                     return; // Kullanıcı iptal ettiyse çık
                 }
-                
-                // Tekrar test et
+            }
+
+            // Ayarları yükle
+            Ayarlar.YukleAyarlar();
+
+            // Veritabanı bağlantısını test et
+            if (!Ayarlar.BaglantiTest())
+            {
+                MessageBox.Show(
+                    "Veritabanına bağlanılamadı!\nLütfen bağlantı ayarlarını yapılandırın.",
+                    "Bağlantı Hatası",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+
+                FormAyarlar ayarlarForm = new FormAyarlar();
+                if (ayarlarForm.ShowDialog() != DialogResult.OK)
+                {
+                    return; // Kullanıcı iptal ettiyse çık
+                }
+
                 if (!Ayarlar.BaglantiTest())
                 {
                     MessageBox.Show(
@@ -41,6 +48,8 @@ namespace MarketYonetim
                     return;
                 }
             }
+
+            VeriKatmani.DiscoveryLogla();
             
             // Ana formu başlat
             Application.Run(new FormSatis());
